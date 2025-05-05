@@ -1,0 +1,159 @@
+type
+  PThreadPool = ^TThreadPool;
+
+  TThreadPoolWorker = record
+    Thread: TThread;
+    Pool: PThreadPool;
+  end;
+
+  PThreadPoolTask = ^TThreadPoolTask;
+  TThreadPoolTask = record
+    Runnable: procedure() of object;
+    Next: PThreadPoolTask;
+  end;
+
+  TThreadPool = record
+    Name: String;
+    Terminated: Boolean;
+    Workers: array of TThreadPoolWorker;
+    Tasks: PThreadPoolTask;
+    TaskLock: TLock;
+  end;
+
+function TThreadPool.NextTask(): PThreadPoolTask;
+begin
+  Self.TaskLock.Enter;
+  Result := Self.Tasks;
+  if (Result <> nil) then
+  begin
+    Self.Tasks := Result^.Next;
+    Result^.Next := nil;
+  end;
+  Self.TaskLock.Leave;
+end;
+
+procedure TThreadPoolWorker.Execute();
+var
+  Task: PThreadPoolTask;
+begin
+  while not Self.Pool^.Terminated do
+  begin
+    Task := nil;
+
+    Task := Self.Pool^.NextTask();
+
+    if Self.Pool^.Terminated then
+      Break;
+
+    if Task = nil then
+    begin
+      Sleep(10);
+      Continue;
+    end;
+
+    try
+      Task^.Runnable();
+    except
+      writeln GetExceptionMessage;
+    end;
+
+    Dispose(Task);
+  end;
+end;
+
+procedure TThreadPool.Init(name: String; size: Integer);
+var
+  i: Integer;
+begin
+  Self.Name := name;
+  Self.TaskLock := TLock.Create;
+
+  SetLength(Self.Workers, size);
+  for i := 0 to High(Self.Workers) do
+  begin
+
+    with Self.Workers[I] do
+    begin
+      Thread := TThread.Create(@Execute);
+      Thread.Name := Format('%s-Worker-%d', [Self.Name, i]);
+      Pool := @Self;
+
+    end;
+
+  end;
+end;
+
+procedure TThreadPool.Run(runnable: procedure() of object);
+var
+  newTask, task: PThreadPoolTask;
+begin
+  New(newTask);
+  newTask^.Runnable := @runnable;
+  newTask^.Next := nil;
+
+  Self.TaskLock.Enter;
+ // writeln Self.Tasks;
+  if Self.Tasks = nil then
+  begin
+    Self.Tasks := newTask;
+  end else
+  begin
+    task := Self.Tasks;
+    while task^.Next <> nil do
+      task := task^.Next;
+
+    task^.Next := newTask;
+  end;
+  Self.TaskLock.Leave;
+end;
+
+procedure TThreadPool.Terminate();
+var
+  i : Integer;
+begin
+  Self.Terminated := True;
+  for i := 0 to High(Self.Workers) do
+    with Self.Workers[i].Thread do
+    begin
+      Terminate;
+      WaitForTerminate;
+      Free;
+    end;
+  Self.TaskLock.Free;
+end;
+//
+//var
+// pool: TThreadPool;
+// CounterLock: TLock;
+// Counter: Int32;
+//
+//procedure Test();
+//var
+//  time: Double;
+//begin
+//  time := PerformanceTimer;
+//  //Sleep(Random(30, 40));
+//  CounterLock.Enter;
+//  Inc(Counter);
+//  Writeln Format('Test in thread(%s). Took %f ms. Counter is %d', [CurrentThread.Name, PerformanceTimer - time, Counter]);
+//  Sleep(5);
+//  CounterLock.Leave;
+//end;
+//
+//
+//
+//begin
+//  CounterLock := TLock.Create;
+//  CounterLock.FreeOnTerminate := True;
+//  pool.Init('Test', 8);
+//  for 1 to 100 do
+//  begin
+//    pool.run(@Test);
+//  end;
+//
+//  //give time for all tasks to complete.
+//  Sleep(5000);
+//
+//  pool.Terminate;
+//end.
+

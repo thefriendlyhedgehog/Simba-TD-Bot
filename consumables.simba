@@ -1,0 +1,82 @@
+{$IFNDEF WASPLIB_OSRS} {$I WaspLib/osrs.simba} {$ENDIF}
+
+   function TBoxArray.Shuffle(): TBoxArray;
+  var
+    i, j: Int32;
+    temp: TBox;
+  begin
+    Result := Self; // Copy the original array first
+
+    for i := High(Result) downto Low(Result) + 1 do
+    begin
+      j := Random(i + 1);
+      temp := Result[i];
+      Result[i] := Result[j];
+      Result[j] := temp;
+    end;
+  end;
+
+type
+  ERSConsumableType = enum(
+    FOOD,
+    PRAYER_RESTORE,
+    ATTACK_BOOST,
+    STRENGTH_BOOST,
+    RANGING_BOOST,
+    MAGIC_BOOST
+  );
+
+  TRSConsumable = record
+    Item: TRSItem;
+    Points: Integer;
+    ConsumableType: ERSConsumableType;
+  end;
+
+  TRSConsumableArray = array of TRSConsumable;
+
+function TRSConsumableArray.ToItemArray(): TRSItemArray;
+var
+  consumable: TRSConsumable;
+begin
+  for consumable in Self do
+    Result += consumable.Item;
+end;
+
+type
+  TRSConsumableHandler = record
+    EatCoolDown,
+    DrinkCoolDown: TCountDown;
+    BoostCoolDowns: array[ERSConsumableType] of TCountDown;
+    Consumables: array[ERSConsumableType] of TRSConsumableArray;
+  end;
+
+function TRSConsumableHandler.FindFirst(consumable: ERSConsumableType; slots: TBoxArray; out box: TBox): Boolean;
+var
+  items: TRSItemArray;
+  match: TImageMatch;
+begin
+  items := Self.Consumables[consumable].ToItemArray;
+  if Result := ItemFinder.Find(items, slots, match) then
+    box := match.Box;
+end;
+
+function TRSConsumableHandler.FindRandom(consumable: ERSConsumableType; slots: TBoxArray; out box: TBox): Boolean;
+begin
+  Result := Self.FindFirst(consumable, slots.Shuffle, box);
+end;
+
+function TRSConsumableHandler.ShouldBoost(consumable: ERSConsumableType): Boolean;
+begin
+  Result := Self.BoostCoolDowns[consumable].IsFinished and Self.DrinkCoolDown.IsFinished;
+end;
+
+function TRSConsumableHandler.Consume(consumable: ERSConsumableType): Boolean;
+begin
+
+  consumable;
+end;
+
+var
+  ConsumableHandler: TRSConsumableHandler;
+
+

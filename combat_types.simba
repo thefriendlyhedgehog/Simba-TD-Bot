@@ -1,0 +1,9 @@
+{$IFNDEF WASPLIB_OSRS} {$I WaspLib/osrs.simba} {$ENDIF}
+
+type
+  ERSCombatStyle = enum(
+    NONE = 0,
+    MAGIC = Ord(ERSPrayer.PROTECT_FROM_MAGIC),
+    RANGED = Ord(ERSPrayer.PROTECT_FROM_MISSILES),
+    MELEE = Ord(ERSPrayer.PROTECT_FROM_MELEE)
+  );

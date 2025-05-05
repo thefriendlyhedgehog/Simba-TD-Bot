@@ -1,0 +1,12 @@
+{$IFNDEF WASPLIB_OSRS} {$I WaspLib/osrs.simba} {$ENDIF}
+{$include_once combat_types.simba}
+{$include_once consumables.simba}
+
+type
+  TCombatLoadout = record
+    Gear: array[ERSEquipment] of TRSItem;
+    OffensivePrayers: TRSPrayerSet;
+    Boost: set of ERSConsumableType;
+    Style: ERSCombatStyle;
+    AutoCastSpell: ERSSpell;
+  end;

@@ -1,0 +1,2 @@
+{$IFNDEF SRLT_OSRS} {$I SRLT/osrs.simba} {$ENDIF}
+

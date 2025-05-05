@@ -1,0 +1,193 @@
+type
+  PThreadPool = ^TThreadPool;
+
+  TThreadPoolWorker = record
+    Thread: TThread;
+    Pool: PThreadPool;
+  end;
+
+  PThreadPoolTask = ^TThreadPoolTask;
+  TThreadPoolTask = record
+    Runnable: procedure() of object;
+    Next: PThreadPoolTask;
+  end;
+
+  TThreadPool = record
+    Name: String;
+    Terminated: Boolean;
+    Workers: array of TThreadPoolWorker;
+    Tasks: PThreadPoolTask;
+    TaskLock: TLock;
+  end;
+
+function TThreadPool.NextTask(): PThreadPoolTask;
+begin
+  Self.TaskLock.Enter;
+  Result := Self.Tasks;
+  if (Result <> nil) then
+  begin
+    Self.Tasks := Result^.Next;
+    Result^.Next := nil;
+  end;
+  Self.TaskLock.Leave;
+end;
+
+procedure TThreadPoolWorker.Execute();
+var
+  Task: PThreadPoolTask;
+begin
+  while not Self.Pool^.Terminated do
+  begin
+    Task := nil;
+
+    Task := Self.Pool^.NextTask();
+
+    if Self.Pool^.Terminated then
+      Break;
+
+    if Task = nil then
+    begin
+      Sleep(10);
+      Continue;
+    end;
+    //writeln 'running a task on ' + CurrentThread.Name + '| task: ' + tostr(Task);
+    try
+      Task^.Runnable();
+    except
+      writeln GetExceptionMessage;
+    end;
+
+    Dispose(Task);
+  end;
+end;
+
+procedure TThreadPool.Init(name: String; size: Integer);
+var
+  i: Integer;
+begin
+  Self.Name := name;
+  Self.TaskLock := TLock.Create;
+
+  SetLength(Self.Workers, size);
+  for i := 0 to High(Self.Workers) do
+  begin
+    with Self.Workers[I] do
+    begin
+      Thread := TThread.Create(@Execute);
+      Thread.Name := Format('%s-Worker-%d', [Self.Name, i]);
+      Pool := @Self;
+    end;
+  end;
+end;
+
+procedure TThreadPool.Run(runnable: procedure() of object);
+var
+  newTask, task: PThreadPoolTask;
+begin
+  New(newTask);
+  newTask^.Runnable := @runnable;
+  newTask^.Next := nil;
+
+  Self.TaskLock.Enter;
+  if Self.Tasks = nil then
+  begin
+    Self.Tasks := newTask;
+  end else
+  begin
+    task := Self.Tasks;
+    while task^.Next <> nil do
+      task := task^.Next;
+
+    task^.Next := newTask;
+  end;
+  Self.TaskLock.Leave;
+end;
+
+procedure TThreadPool.Terminate();
+var
+  i : Integer;
+begin
+  Self.Terminated := True;
+  for i := 0 to High(Self.Workers) do
+    with Self.Workers[i].Thread do
+    begin
+      Terminate;
+      WaitForTerminate;
+      Free;
+    end;
+  Self.TaskLock.Free;
+end;
+
+type
+  TReschedulingTask = record
+    ThreadPool: ^TThreadPool;
+    Task: procedure() of object;
+  end;
+
+procedure TReschedulingTask.Run();
+var
+  newTask: ^TReschedulingTask;
+begin
+//writeln 'reschedulingtask.run';
+if @Self = nil then
+  writeln 'self is nil';
+
+  if @Self.Task = nil then
+    writeln 'self.task is nil';
+
+  if @Self.Task = nil then
+    Exit;
+
+  try
+    Self.Task();
+  except
+    writeln getexceptionmessage;
+    writeln DumpCallStack;
+    writeln 'Error on task: ' + tostr(@Self.Task);
+  end;
+  Sleep(1);
+  //Self.ThreadPool^.Run(@Self.Run);
+
+    // Allocate a fresh task to avoid reuse issues
+  New(newTask);
+  newTask^.ThreadPool := Self.ThreadPool;
+  newTask^.Task := @Self.Task;
+  newTask^.ThreadPool^.Run(@newTask^.Run);
+
+  Dispose(Self);
+end;
+
+type
+  TReschedulingTaskManager = record
+    ThreadPool: TThreadPool;
+  end;
+
+function timeBeginPeriod(uMilliseconds: UInt32): UInt32; external 'timeBeginPeriod@winmm.dll';
+function timeEndPeriod(uMilliseconds: UInt32): UInt32; external 'timeEndPeriod@winmm.dll';
+
+procedure TReschedulingTaskManager.Init(name: String; size: Integer);
+var
+  returnCode: Integer;
+begin
+  //TODO call timeEndPeriod on terminate??
+  //if (returnCode := timeBeginPeriod(1)) <> 0 then
+  //  WriteLn('Failed to modify clock. ', returnCode);
+
+  Self.ThreadPool.Init(name, size);
+end;
+
+procedure TReschedulingTaskManager.Schedule(Task: procedure() of object);
+var
+  newTask: ^TReschedulingTask;
+begin
+  New(newTask);
+  newTask^.ThreadPool := @Self.ThreadPool;
+  newTask^.Task := @Task;
+  Self.ThreadPool.Run(@newTask^.Run);
+end;
+
+procedure TReschedulingTaskManager.Terminate();
+begin
+  Self.ThreadPool.Terminate;
+end;
+

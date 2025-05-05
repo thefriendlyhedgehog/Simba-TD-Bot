@@ -1,0 +1,388 @@
+{$IFNDEF WASPLIB_OSRS} {$I WaspLib/osrs.simba} {$ENDIF}
+
+{$include_once combat_types.simba}
+{$include_once game_state.simba}
+{$include_once consumables.simba}
+{$include_once gear.simba}
+
+function EdgeWeightedRandom(samples, minVal, maxVal: Integer): Integer;
+var
+  i, candidate, bestCandidate: Integer;
+begin
+  bestCandidate := Random(minVal, maxVal + 1);
+
+  for i := 2 to samples do
+  begin
+    candidate := Random(minVal, maxVal + 1);
+    if Abs(candidate) > Abs(bestCandidate) then
+      bestCandidate := candidate;
+  end;
+
+  Result := bestCandidate;
+end;
+
+type
+
+  //IMPORTANT!! Declared in order of action priority.
+  ETDCombatAction = (
+    NONE,
+    DODGE_SNARE,
+    SWAP_PRAYER,
+    HEAL,
+    RESTORE_PRAYER,
+    CONSUME_BOOST,
+    SWAP_GEAR,
+    STEP_AWAY,
+    ATTACK,
+    BEGIN_FIGHT,
+    END_KILL,
+    OPEN_INVENTORY,
+    OPEN_PRAYER,
+    OPEN_MAGIC
+  );
+
+  TTDCombatActionSet = set of ETDCombatAction;
+
+procedure TTDCombatActionSet.Add(action: ETDCombatAction); begin
+  Self := Self + action;
+end;
+
+procedure TTDCombatActionSet.Add(actions: TTDCombatActionSet); overload; begin
+  Self := Self + actions;
+end;
+
+procedure TTDCombatActionSet.Remove(action: ETDCombatAction); begin
+  Self := Self - [action];
+end;
+
+function TTDCombatActionSet.Contains(action: ETDCombatAction): Boolean; begin
+  Result := action in Self;
+end;
+
+type
+  TTDCombat = record
+    ActionHandlers: array[ETDCombatAction] of procedure() of object;
+
+    Loadouts: array[0..1] of TCombatLoadout;
+    CurrentLoadout: Integer;
+
+    IsAttacking: Boolean;
+
+  end;
+
+procedure TTDCombat.DebugLn(text: String); begin
+  WriteLn(GetTimeStamp + ':[TTDCombat]: ' + text);
+end;
+
+procedure TTDCombat.DebugLn(text: String; args: TVariantArray); overload; begin
+  Self.DebugLn(Format(text, args));
+end;
+
+function TTDCombat.ShouldHeal(): Boolean;
+begin
+  Result := ConsumableHandler.EatCoolDown.IsFinished
+            and ConsumableHandler.DrinkCoolDown.IsFinished
+            and (GameState.GetPlayerHealth < 60);
+end;
+
+function TTDCombat.ShouldBoost(): Boolean;
+var
+  loadout: TCombatLoadout;
+  boost: ERSConsumableType;
+begin
+  loadout := Self.Loadouts[Self.CurrentLoadout];
+  Result := (Length(loadout.Boost) <> 0);
+  for boost in loadout.Boost do
+    if not ConsumableHandler.ShouldBoost(boost) then
+      Exit(False);
+end;
+
+function TTDCombat.ShouldRestorePrayer(): Boolean;
+begin
+  Result := ConsumableHandler.DrinkCoolDown.IsFinished and (GameState.GetPlayerPrayerPoints < 20);
+end;
+
+function TTDCombat.ShouldChangePrayer(): Boolean;
+begin
+  if not (ERSPrayer(Ord(GameState.GetTormentedDemonCombatStyle)) in GameState.GetPlayerActivePrayers) then
+    Exit(True);
+
+  if (Self.Loadouts[Self.CurrentLoadout].OffensivePrayers - GameState.GetPlayerActivePrayers) <> TRSPrayerSet([])then
+    Exit(True);
+end;
+
+function TTDCombat.ShouldChangeGear(): Boolean;
+begin
+  if ERSPrayer(Ord(Self.Loadouts[Self.CurrentLoadout].Style)) = GameState.GetTormentedDemonProtectionPrayer then
+    Exit(True);
+
+  //TODO CALC DPS to decide whether or not to switch styles
+end;
+
+function TTDCombat.IsSnared(): Boolean;
+begin
+  Result := GameState.IsPlayerSnared;
+end;
+
+function TTDCombat.GetActions(): TTDCombatActionSet; begin
+  if Self.ShouldHeal          then Result.Add([ETDCombatAction.Heal,           ETDCombatAction.ATTACK]);
+  if Self.ShouldBoost         then Result.Add([ETDCombatAction.CONSUME_BOOST,  ETDCombatAction.ATTACK]);
+  if Self.ShouldRestorePrayer then Result.Add([ETDCombatAction.RESTORE_PRAYER, ETDCombatAction.ATTACK]);
+  if Self.ShouldChangePrayer  then Result.Add([ETDCombatAction.SWAP_PRAYER]);
+
+  if Self.ShouldChangeGear then
+    Result.Add([ETDCombatAction.OPEN_INVENTORY, ETDCombatAction.SWAP_GEAR, ETDCombatAction.ATTACK]);
+
+  if Self.IsSnared then
+    Result.Add([ETDCombatAction.DODGE_SNARE, ETDCombatAction.SWAP_PRAYER, ETDCombatAction.ATTACK]);
+end;
+
+procedure TTDCombat.Action_None();
+begin
+
+end;
+
+procedure TTDCombat.Action_BeginFight();
+begin
+  Self.DoAction(ETDCombatAction.ATTACK);
+  //Confirm the results of ATTACK action
+  if not Self.IsAttacking then
+    Exit;
+
+  if Self.Loadouts[Self.CurrentLoadout].Style = ERSCombatStyle.MELEE then
+  begin
+    SleepUntil(False, 100, 600*Ceil(GameState.GetPlayerPosition.DistanceTo(GameState.GetTormentedDemonPosition)*4));
+    //TODO look for hitsplats or something to end sleep until
+    //replace sleep until with a real loop or move waitforcombat into its own function.
+    //async mouse to prayers
+  end;
+
+  if GameState.GetTormentedDemonPosition.DistanceTo(GameState.GetPlayerPosition) <= 12 then
+    Self.DoAction(ETDCombatAction.STEP_AWAY);
+
+  Sleep(600);
+  if GameState.GetTormentedDemonPosition.DistanceTo(GameState.GetPlayerPosition)
+    < GameState.GetTormentedDemonPosition.DistanceTo(GameState.GetPlayerPosition) then
+  begin
+    GameState.SetTormentedDemonCombatStyle(ERSCombatStyle.MELEE);
+  end else
+  begin
+    GameState.SetTormentedDemonCombatStyle(ERSCombatStyle.RANGED);
+  end;
+end;
+
+procedure TTDCombat.Action_Attack();
+var
+  timeout: TCountDown;
+begin
+  if GameState.GetTormentedDemonMSPoints.Length < 1 then
+    Exit;
+  ASync.MouseMove(GameState.GetTormentedDemonMSPoints.SortFrom(Mouse.Position).Last);
+  timeout.Start(5000);
+  //while mouse is moving to the center of tormented demon we check for proper uptext and upon
+  //finding the uptext, we wait at a random range of 100ms to 2 seconds or when mouse movement is
+  //done before checking again for proper uptext. What this does is allow us to move torward center
+  //of the demon while randomly clicking on the demon on the way but at a random spot and time.
+  while (timeout.Remaining > 0) and ASync.MouseMoving do
+  begin
+    Sleep(10);
+    if not MainScreen.IsUpText(['Attack', 'Tormented', 'Demon', '450']) then
+      Continue;
+
+    SleepUntil(not ASync.MouseMoving, 100, RandomLeft(100, 2000));
+
+    if MainScreen.IsUpText(['Attack', 'Tormented', 'Demon', '450']) then
+      Break;
+  end;
+
+  if ASync.MouseMoving then
+    ASync.MouseStop;
+
+  if not MainScreen.IsUpText(['Attack', 'Tormented', 'Demon', '450']) then
+    Exit;
+
+  Target.MouseClick(EMouseButton.LEFT);
+  Self.IsAttacking := MainScreen.WaiRedClick;
+end;
+
+procedure TTDCombat.Action_StepAway();
+var
+  direction, destination: TPoint;
+  magnitude, normDirX, normDirY: Double;
+  attempt: Integer;
+  rotation: Double;
+  walkableMMPoints: TPointArray;
+  tile: TQuad;
+begin
+  //find target coordinates used to search for a place to walk to. Target is calculated to be 3 tiles further away with the demon.
+  direction := GameState.GetTormentedDemonPosition - GameState.GetPlayerPosition;
+  magnitude := Sqrt(Sqr(direction.X) + Sqr(direction.Y));
+  if magnitude > 0 then
+  begin
+    normDirX := direction.X / magnitude;
+    normDirY := direction.Y / magnitude;
+  end;
+  destination := GameState.GetPlayerPosition.Offset(-Round(normDirX * 12), -Round(normDirY*12));
+  destination := Minimap.Center + (destination - GameState.GetPlayerPosition);
+
+  //Take 3 attempts to search the minimap for walkable colors in a 6x6 box centered around the calculated destination.
+  //If no matches are found we will rotate the search area by +-30, edge weighted, around the tormented demons position.
+  for attempt := 1 to 3 do
+  begin
+    walkableMMPoints := Target.FindColor(0, 0, Box(destination, 6, 6));
+    if walkableMMPoints.Length >= 5 then
+      Break;
+
+    rotation := EdgeWeightedRandom(4, -30, 30);
+    destination.Rotate(rotation, GameState.TormentedDemon.MapPosition);
+  end;
+
+  //check if we ever found walkable colors
+  if walkableMMPoints.Length < 5 then
+  begin
+    Exit;
+  end;
+
+  //grab random point from walkable points found and convert to mainscreen quad to click into
+  destination := walkableMMPoints.Random;
+  tile := Minimap.Point2MSQuad(destination, [1,1], Minimap.GetCompassAngle(True));
+  Target.MouseMove(tile, True);
+  Target.MouseClick(EMouseButton.LEFT);
+
+  if not MainScreen.WaiYellowClick(Random(125, 250)) then
+  begin
+    ChooseOption.Select(['Walk',' here']);
+  end;
+end;
+
+procedure TTDCombat.Action_SwapPrayer();
+var
+  requiredPrayers: TRSPrayerSet;
+begin
+  if GameState.GetTormentedDemonCombatStyle <> ERSCombatStyle.NONE then
+    requiredPrayers += ERSPrayer(Ord(GameState.GetTormentedDemonCombatStyle));
+
+  if Self.IsAttacking then
+    requiredPrayers += Self.Loadouts[Self.CurrentLoadout].OffensivePrayers;
+
+  Prayer.Activate(requiredPrayers);
+end;
+
+procedure TTDCombat.Action_Heal();
+begin
+  ConsumableHandler.Consume(ERSConsumableType.FOOD);
+end;
+
+procedure TTDCombat.Action_ConsumeBoost();
+var
+  boost: ERSConsumableType;
+begin
+  for boost in Self.Loadouts[Self.CurrentLoadout].Boost do
+  begin
+    if ConsumableHandler.ShouldBoost(boost) then
+    begin
+      ConsumableHandler.Consume(boost);
+      Break;
+    end;
+  end;
+end;
+
+procedure TTDCombat.Action_RestorePrayer();
+begin
+  ConsumableHandler.Consume(ERSConsumableType.PRAYER_RESTORE);
+end;
+
+procedure TTDCombat.Action_SwapGear();
+var
+  gearToEquip: TRSItemArray;
+  item: TRSItem;
+  slots: TIntegerArray;
+  slot: Integer;
+begin
+  gearToEquip := Self.Loadouts[Self.CurrentLoadout].Gear;
+
+  if not Inventory.Open and ChooseOption.Close then
+    Exit;
+
+  for item in gearToEquip do
+    slots += GameState.GetPlayerInventoryItems.IndexOf(item);
+
+  slots.Remove(-1); //TODO remove all??
+
+  for slot in slots do
+  begin
+    Inventory.Slots.Hover(slot);
+    Sleep(0, 50, ERandomDir.LEFT);
+    Mouse.Click(EMouseButton.LEFT);
+    Sleep(0, 50, ERandomDir.LEFT);
+  end;
+
+  Self.CurrentLoadout := Self.CurrentLoadout xor 1;
+end;
+
+procedure TTDCombat.Action_DodgeSnare();
+begin
+
+end;
+
+procedure TTDCombat.Action_EndKill();
+begin
+
+end;
+
+procedure TTDCombat.Action_OpenInventory();
+begin
+  Inventory.Open;
+end;
+
+procedure TTDCombat.Action_OpenPrayer();
+begin
+  Prayer.Open;
+end;
+
+procedure TTDCombat.Action_OpenMagic();
+begin
+  Magic.Open;
+end;
+
+procedure TTDCombat.DoAction(action: ETDCombatAction); begin
+  Self.ActionHandlers[action]();
+end;
+
+function TTDCombat.ShouldContinueFighting: Boolean; begin
+  Result := True;
+end;
+
+procedure TTDCombat.Fight();
+var
+  action: ETDCombatAction;
+begin
+  Self.DoAction(ETDCombatAction.BEGIN_FIGHT);
+
+  while Self.ShouldContinueFighting do begin
+    for action in Self.GetActions do
+      Self.DoAction(action);
+  end;
+end;
+
+procedure TTDCombat.Init; begin
+  Self.ActionHandlers[ETDCombatAction.NONE          ] := @Self.Action_None;
+  Self.ActionHandlers[ETDCombatAction.BEGIN_FIGHT   ] := @Self.Action_BeginFight;
+  Self.ActionHandlers[ETDCombatAction.ATTACK        ] := @Self.Action_Attack;
+  Self.ActionHandlers[ETDCombatAction.STEP_AWAY     ] := @Self.Action_StepAway;
+  Self.ActionHandlers[ETDCombatAction.SWAP_PRAYER   ] := @Self.Action_SwapPrayer;
+  Self.ActionHandlers[ETDCombatAction.HEAL          ] := @Self.Action_Heal;
+  Self.ActionHandlers[ETDCombatAction.CONSUME_BOOST ] := @Self.Action_ConsumeBoost;
+  Self.ActionHandlers[ETDCombatAction.RESTORE_PRAYER] := @Self.Action_RestorePrayer;
+  Self.ActionHandlers[ETDCombatAction.SWAP_GEAR     ] := @Self.Action_SwapGear;
+  Self.ActionHandlers[ETDCombatAction.DODGE_SNARE   ] := @Self.Action_DodgeSnare;
+  Self.ActionHandlers[ETDCombatAction.END_KILL      ] := @Self.Action_EndKill;
+  Self.ActionHandlers[ETDCombatAction.OPEN_INVENTORY] := @Self.Action_OpenInventory;
+  Self.ActionHandlers[ETDCombatAction.OPEN_PRAYER   ] := @Self.Action_OpenPrayer;
+  Self.ActionHandlers[ETDCombatAction.OPEN_MAGIC    ] := @Self.Action_OpenMagic;
+end;
+
+var
+  TDCombat: TTDCombat;
+
+
