@@ -11,12 +11,7 @@ type
     Player: record
       Lock: TLock;
 
-      Health, PrayerPoints,
-      RunEnergy, SpecialEnergy: Integer;
-
-      SpecialActivated, RunActivated: Boolean;
-
-      MapPosition: TPoint;
+      Position: TPoint;
 
       ActivePrayers: TRSPrayerSet;
       InventoryItems: TRSItemArray;
@@ -26,65 +21,63 @@ type
       Lock: TLock;
 
       ProtectionPrayer: ERSPrayer;
-      CombatStyle: ERSCombatStyle; //??
+      CombatStyle: ERSCombatStyle;
       MainScreenPoints: TPointArray;
-      MapPosition: TPoint;
+      Position: TPoint;
       Health: Integer;
       IsCastingSnare: Boolean;
     end;
   end;
 
-procedure TTDBotGameState.UpdatePlayerVitals(health, prayerPoints, runEnergy, specialEnergy: Integer);
+procedure TTDBotGameState.SetPlayerPosition(position: TPoint);
 begin
   Self.Player.Lock.Enter;
-  Self.Player.Health := health;
-  Self.Player.PrayerPoints := prayerPoints;
-  Self.Player.RunEnergy := runEnergy;
-  Self.Player.SpecialEnergy := specialEnergy;
+  Self.Player.Position := position;
   Self.Player.Lock.Leave;
 end;
 
-procedure TTDBotGameState.ReadPlayerVitals();
-const
-  AREA: TBox = [-35, -1, -15, 9];
-begin
-  if RSClient.IsLoggedIn then
-    Self.UpdatePlayerVitals(
-      OCR.RecognizeShadow(AREA.Offset(Minimap.Orbs[ERSMinimapOrb.HITPOINTS].Bounds.TopLeft), RSFonts.PLAIN_11, 5).ExtractInteger,
-      OCR.RecognizeShadow(AREA.Offset(Minimap.Orbs[ERSMinimapOrb.PRAYER   ].Bounds.TopLeft), RSFonts.PLAIN_11, 5).ExtractInteger,
-      OCR.RecognizeShadow(AREA.Offset(Minimap.Orbs[ERSMinimapOrb.ENERGY   ].Bounds.TopLeft), RSFonts.PLAIN_11, 5).ExtractInteger,
-      OCR.RecognizeShadow(AREA.Offset(Minimap.Orbs[ERSMinimapOrb.SPECIAL  ].Bounds.TopLeft), RSFonts.PLAIN_11, 5).ExtractInteger
-    );
-end;
-
-procedure TTDBotGameState.UpdatePlayerPosition(mapPosition: TPoint);
+function TTDBotGameState.GetPlayerPosition(): TPoint;
 begin
   Self.Player.Lock.Enter;
-  Self.Player.MapPosition := mapPosition;
+  Result := Self.Player.Position;
   Self.Player.Lock.Leave;
 end;
 
 procedure TTDBotGameState.ReadPlayerPosition();
 begin
   if RSClient.IsLoggedIn then
-    Self.UpdatePlayerPosition(Map.Position);
+   Self.SetPlayerPosition(Map.Position);
 end;
 
-procedure TTDBotGameState.UpdateInventoryItems(items: TRSItemArray);
+procedure TTDBotGameState.SetInventoryItems(items: TRSItemArray);
 begin
   Self.Player.Lock.Enter;
-  Self.Player.InventoryItems := items;
+  Self.Player.InventoryItems := items.Copy;
   Self.Player.Lock.Leave;
 end;
 
-procedure TTDBotGameState.UpdateActivePrayers(prayers: TRSPrayerSet);
+function TTDBotGameState.GetInventoryItems(): TRSItemArray;
+begin
+  Self.Player.Lock.Enter;
+  Result := Self.Player.InventoryItems.Copy;
+  Self.Player.Lock.Leave;
+end;
+
+procedure TTDBotGameState.SetPlayerActivePrayers(prayers: TRSPrayerSet);
 begin
   Self.Player.Lock.Enter;
   Self.Player.ActivePrayers := prayers;
   Self.Player.Lock.Leave;
 end;
 
-procedure TTDBotGameState.ReadGameTab();
+function TTDBotGameState.GetPlayerActivePrayers(): TRSPrayerSet;
+begin
+  Self.Player.Lock.Enter;
+  Result := Self.Player.ActivePrayers;
+  Self.Player.Lock.Leave;
+end;
+
+procedure TTDBotGameState.ReadGameTabs();
 var
   slot, i: Integer;
   emptySlots: TIntegerArray;
@@ -107,75 +100,11 @@ begin
         items[slot] := discovered[i];
         Inc(i);
       end;
-
+      Self.SetInventoryItems(items);
     end;
 
-    ERSGameTab.PRAYER: Self.UpdateActivePrayers(Prayer.GetActivePrayers);
+    ERSGameTab.PRAYER: Self.SetPlayerActivePrayers(Prayer.GetActivePrayers);
   end;
-end;
-
-procedure TTDBotGameState.SearchTormentedDemonSnare();
-var
-  snareColors : TPointArray;
-  snareVisible: Boolean;
-begin
-  snareColors := Target.FindColor(0, 0, Box(MainScreen.Center, 100, 100));
-  snareVisible := InRange(snareColors.Cluster(3).SortFrom(MainScreen.Center)[0].MinAreaCircle.Radius,
-      MainScreen.NormalizeDistance(20),
-      MainScreen.NormalizeDistance(30));
-
-  Self.TormentedDemon.Lock.Enter;
-  Self.TormentedDemon.IsCastingSnare := snareVisible;
-  Self.TormentedDemon.Lock.Leave;
-end;
-
-function TTDBotGameState.GetPlayerHealth(): Integer;
-begin
-  Self.Player.Lock.Enter;
-  Result := Self.Player.Health;
-  Self.Player.Lock.Leave;
-end;
-
-function TTDBotGameState.GetPlayerPrayerPoints(): Integer;
-begin
-  Self.Player.Lock.Enter;
-  Result := Self.Player.PrayerPoints;
-  Self.Player.Lock.Leave;
-end;
-
-function TTDBotGameState.GetPlayerRunEnergy(): Integer;
-begin
-  Self.Player.Lock.Enter;
-  Result := Self.Player.RunEnergy;
-  Self.Player.Lock.Leave;
-end;
-
-function TTDBotGameState.GetPlayerSpecialEnergy(): Integer;
-begin
-  Self.Player.Lock.Enter;
-  Result := Self.Player.SpecialEnergy;
-  Self.Player.Lock.Leave;
-end;
-
-function TTDBotGameState.GetPlayerPosition(): TPoint;
-begin
-  Self.Player.Lock.Enter;
-  Result := Self.Player.MapPosition;
-  Self.Player.Lock.Leave;
-end;
-
-function TTDBotGameState.GetPlayerActivePrayers(): TRSPrayerSet;
-begin
-  Self.Player.Lock.Enter;
-  Result := Self.Player.ActivePrayers;
-  Self.Player.Lock.Leave;
-end;
-
-function TTDBotGameState.GetPlayerInventoryItems(): TRSItemArray;
-begin
-  Self.Player.Lock.Enter;
-  Result := Self.Player.InventoryItems;
-  Self.Player.Lock.Leave;
 end;
 
 function TTDBotGameState.IsPlayerSnared(): Boolean;
@@ -185,97 +114,29 @@ begin
   Self.Player.Lock.Leave;
 end;
 
-procedure TTDBotGameState.FindTormentedDemon();
-const
-  COMBAT_BOUNDS: TBox = [12040, 32718, 12084, 32782];
+procedure TTDBotGameState.FindTormentedDemonSnare();
 var
-  matrix: TIntegerMatrix;
-  points: TPointArray;
-  row: TIntegerArray;
-  i, x, y, color, pointIndex: Integer;
-  hslColor: TColorHSL;
-  overheads: TRSOverheadArray;
-  overhead: TRSOverhead;
-
-  colorClusters: T2DPointArray;
-  nearestOverhead: record index, xDistance: Integer; end;
-  xDistance: Integer;
-  d: double;
+  snareColors : TPointArray;
+  snareVisible: Boolean;
 begin
-  d := performancetime;
-  if not (Self.GetPlayerPosition in COMBAT_BOUNDS) then
+  snareColors := Target.FindColor(0, 0, Box(MainScreen.Center, 100, 100));
+  if snareColors.Length = 0 then
     Exit;
 
-  matrix := Target.GetColorsMatrix(MainScreen.Bounds);
-  SetLength(points, MainScreen.Bounds.Area);
-  for y := 0 to matrix.Length - 1 do
-  begin
-    row := matrix[y];
-    for x := 0 to row.Length - 1 do
-    begin
-      color := row[x];
-      if (color <> 65280) and (color <> 255) then
-      begin
-        hslColor := ColorToHSL(color);
-        if (hslColor.S > 10) and (hslColor.L > 40) then
-        begin
-          points[pointIndex] := [x,y];
-          Inc(pointIndex);
-        end;
-      end;
-    end;
-  end;
-  SetLength(points, pointIndex);
-  points := points.Offset(MainScreen.Bounds.TopLeft)
-                  .ExcludeBox(XPBar.Bounds)
-                  //TODO exclude playerbox
-                  .Grow(4)
-                  .Erode(3)
-                  ;
+  snareVisible := InRange(snareColors.Cluster(3).SortFrom(MainScreen.Center)[0].MinAreaCircle.Radius,
+      MainScreen.NormalizeDistance(20),
+      MainScreen.NormalizeDistance(30));
 
-  if points.Length = 0 then
-    Exit;
-
-  overheads := OverheadFinder.Find([ERSOverhead.MELEE, ERSOverhead.RANGED, ERSOverhead.MAGIC], 5);
-  if Length(overheads) = 0 then
-    Exit;
-
-  for overhead in overheads do
-    with overhead.Position do
-      points := points.ExcludeBox([X-14,Y-14,X+14,Y+14]);
-
-  if points.Length = 0 then
-    Exit;
-
-  colorClusters := points.Cluster(2);//TODO normalize
-  points := colorClusters.Largest;
-  if points.Length < MainScreen.NormalizeDistance(1000) then
-    Exit;
   Self.TormentedDemon.Lock.Enter;
-  Self.TormentedDemon.MainScreenPoints := points.Copy;
+  Self.TormentedDemon.IsCastingSnare := snareVisible;
   Self.TormentedDemon.Lock.Leave;
-  nearestOverhead.index := -1;
-  points.SortByY(True);
-  for i := 0 to High(overheads) do
-  begin
-    if overheads[i].Position.Y <= points[0].Y then
-      Continue;
-    xDistance := Abs(overheads[i].Position.X - points.Mean.X);
-    if (nearestOverhead.index = -1) or (xDistance < nearestOverhead.xDistance) then
-      nearestOverhead := [i, xDistance];
-  end;
+end;
 
-  if nearestOverhead.index > -1 then
-  begin
-    Self.TormentedDemon.Lock.Enter;
-    case overheads[nearestOverhead.index].Overhead of
-      ERSOverhead.MELEE:  Self.TormentedDemon.ProtectionPrayer := ERSPrayer.PROTECT_FROM_MELEE;
-      ERSOverhead.MAGIC:  Self.TormentedDemon.ProtectionPrayer := ERSPrayer.PROTECT_FROM_MAGIC;
-      ERSOverhead.RANGED: Self.TormentedDemon.ProtectionPrayer := ERSPrayer.PROTECT_FROM_MISSILES;
-    end;
-    Self.TormentedDemon.Lock.Leave;
-  end;
-  writeln 'findtormenteddemon took ' + tostr(performancetime - d);
+procedure TTDBotGameState.SetTormentedDemonMSPoints(points: TPointArray);
+begin
+  Self.TormentedDemon.Lock.Enter;
+  Self.TormentedDemon.MainScreenPoints := points.copy;
+  Self.TormentedDemon.Lock.Leave;
 end;
 
 function TTDBotGameState.GetTormentedDemonMSPoints(): TPointArray;
@@ -285,10 +146,24 @@ begin
   Self.TormentedDemon.Lock.Leave;
 end;
 
+procedure TTDBotGameState.SetTormentedDemonPosition(position: TPoint);
+begin
+  Self.TormentedDemon.Lock.Enter;
+  Self.TormentedDemon.Position := position;
+  Self.TormentedDemon.Lock.Leave;
+end;
+
 function TTDBotGameState.GetTormentedDemonPosition(): TPoint;
 begin
   Self.TormentedDemon.Lock.Enter;
-  Result := Self.TormentedDemon.MapPosition;
+  Result := Self.TormentedDemon.Position;
+  Self.TormentedDemon.Lock.Leave;
+end;
+
+procedure TTDBotGameState.SetTormentedDemonCombatStyle(style: ERSCombatStyle);
+begin
+  Self.TormentedDemon.Lock.Enter;
+  Self.TormentedDemon.CombatStyle := style;
   Self.TormentedDemon.Lock.Leave;
 end;
 
@@ -299,11 +174,10 @@ begin
   Self.TormentedDemon.Lock.Leave;
 end;
 
-
-procedure TTDBotGameState.SetTormentedDemonCombatStyle(style: ERSCombatStyle);
+procedure TTDBotGameState.SetTormentedDemonProtectionPrayer(prayer: ERSPrayer);
 begin
   Self.TormentedDemon.Lock.Enter;
-  Self.TormentedDemon.CombatStyle := style;
+  Self.TormentedDemon.ProtectionPrayer := prayer;
   Self.TormentedDemon.Lock.Leave;
 end;
 
@@ -314,18 +188,31 @@ begin
   Self.TormentedDemon.Lock.Leave;
 end;
 
+procedure TTDBotGameState.FindTormentedDemon();
+const
+  COMBAT_BOUNDS: TBox = [12040, 32718, 12084, 32782];
+var
+  d: double;
+begin
+  d := performancetime;
+  if not (Self.GetPlayerPosition in COMBAT_BOUNDS) then
+    Exit;
 
+
+
+  writeln 'TTDBotGameState.FindTormentedDemon ' + tostr(performancetime - d);
+end;
 
 procedure TTDBotGameState.Start();
 begin
   Self.Player.Lock := TLock.Create;
   Self.TormentedDemon.Lock := TLock.Create;
   Self.TaskManager.Init('game_state', CPUInfo.CoreCount);
-  writeln 'taskmanager started';
-  //Self.TaskManager.Schedule(@Self.ReadPlayerVitals);
+
   Self.TaskManager.Schedule(@Self.ReadPlayerPosition);
-  //Self.TaskManager.Schedule(@Self.ReadGameTab);
-  //Self.TaskManager.Schedule(@Self.FindTormentedDemon);
+  Self.TaskManager.Schedule(@Self.ReadGameTabs);
+  Self.TaskManager.Schedule(@Self.FindTormentedDemon);
+  Self.TaskManager.Schedule(@Self.FindTormentedDemonSnare);
 
   WriteLn('ReadPlayerPosition: ', ToStr(@Self.ReadPlayerPosition));
   Writeln('FindTormentedDemon: ', ToStr(@Self.FindTormentedDemon));

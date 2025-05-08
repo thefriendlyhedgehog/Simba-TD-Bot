@@ -79,10 +79,12 @@ procedure TTDCombat.DebugLn(text: String; args: TVariantArray); overload; begin
 end;
 
 function TTDCombat.ShouldHeal(): Boolean;
+var
+  health: Integer; //placeholder
 begin
   Result := ConsumableHandler.EatCoolDown.IsFinished
             and ConsumableHandler.DrinkCoolDown.IsFinished
-            and (GameState.GetPlayerHealth < 60);
+            and (health < 60);
 end;
 
 function TTDCombat.ShouldBoost(): Boolean;
@@ -98,8 +100,10 @@ begin
 end;
 
 function TTDCombat.ShouldRestorePrayer(): Boolean;
+var
+  prayerpoints: Integer; //placeholder
 begin
-  Result := ConsumableHandler.DrinkCoolDown.IsFinished and (GameState.GetPlayerPrayerPoints < 20);
+  Result := ConsumableHandler.DrinkCoolDown.IsFinished and (prayerpoints < 20);
 end;
 
 function TTDCombat.ShouldChangePrayer(): Boolean;
@@ -234,7 +238,7 @@ begin
       Break;
 
     rotation := EdgeWeightedRandom(4, -30, 30);
-    destination.Rotate(rotation, GameState.TormentedDemon.MapPosition);
+    destination.Rotate(rotation, GameState.TormentedDemon.Position);
   end;
 
   //check if we ever found walkable colors
@@ -305,7 +309,7 @@ begin
     Exit;
 
   for item in gearToEquip do
-    slots += GameState.GetPlayerInventoryItems.IndexOf(item);
+    slots += GameState.GetInventoryItems.IndexOf(item);
 
   slots.Remove(-1); //TODO remove all??
 

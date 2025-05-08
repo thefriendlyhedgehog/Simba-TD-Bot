@@ -50,11 +50,12 @@ begin
       Sleep(10);
       Continue;
     end;
-    //writeln 'running a task on ' + CurrentThread.Name + '| task: ' + tostr(Task);
+
     try
       Task^.Runnable();
     except
       writeln GetExceptionMessage;
+      writeln DumpCallStack;
     end;
 
     Dispose(Task);
@@ -128,27 +129,13 @@ procedure TReschedulingTask.Run();
 var
   newTask: ^TReschedulingTask;
 begin
-//writeln 'reschedulingtask.run';
-if @Self = nil then
-  writeln 'self is nil';
-
-  if @Self.Task = nil then
-    writeln 'self.task is nil';
-
   if @Self.Task = nil then
     Exit;
 
-  try
-    Self.Task();
-  except
-    writeln getexceptionmessage;
-    writeln DumpCallStack;
-    writeln 'Error on task: ' + tostr(@Self.Task);
-  end;
+  Self.Task();
   Sleep(1);
-  //Self.ThreadPool^.Run(@Self.Run);
 
-    // Allocate a fresh task to avoid reuse issues
+  // Allocate a fresh task to avoid reuse issues
   New(newTask);
   newTask^.ThreadPool := Self.ThreadPool;
   newTask^.Task := @Self.Task;
@@ -166,13 +153,7 @@ function timeBeginPeriod(uMilliseconds: UInt32): UInt32; external 'timeBeginPeri
 function timeEndPeriod(uMilliseconds: UInt32): UInt32; external 'timeEndPeriod@winmm.dll';
 
 procedure TReschedulingTaskManager.Init(name: String; size: Integer);
-var
-  returnCode: Integer;
 begin
-  //TODO call timeEndPeriod on terminate??
-  //if (returnCode := timeBeginPeriod(1)) <> 0 then
-  //  WriteLn('Failed to modify clock. ', returnCode);
-
   Self.ThreadPool.Init(name, size);
 end;
 

@@ -47,6 +47,7 @@ var
   overhead: ERSOverhead;
   bounds: TBox;
   searchingBounds: TBoxArray;
+  image: TImage;
   matrix: TSingleMatrix;
   d: double;
 begin
@@ -63,7 +64,13 @@ begin
       if (bounds.Width < Self.Images[overhead].Width) or (bounds.Height < Self.Images[overhead].Height) then
         Continue;
 
-      matrix := MatchTemplate(Target.GetImage(bounds), Self.Images[overhead], ETMFormula.TM_CCOEFF_NORMED);
+      image := Target.GetImage(bounds);
+      try
+        matrix := MatchTemplate(image, Self.Images[overhead], ETMFormula.TM_CCOEFF_NORMED);
+      finally
+        image.Free;
+      end;
+
       with matrix.ArgMax do
       begin
         if matrix[y,x] < 0.99 then

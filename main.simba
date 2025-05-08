@@ -1,55 +1,26 @@
-{$DEFINE WL_DISABLE_REMOTEINPUT}
-
-var
-  TargetImageLock: TLock; //TODO find somewhere else to place this
-
-{$IFNDEF WASPLIB_OSRS} {$I WaspLib/osrs.simba} {$ENDIF}
+//{$DEFINE WL_DISABLE_REMOTEINPUT}
+{$INCLUDE_ONCE WaspLib/osrs.simba}
 {$INCLUDE_ONCE combat.simba}
-
-
-function TTarget.GetImage(Bounds: TBox = [-1, -1, -1, -1]): TImage; override;
-begin
-  if (Bounds.Width < 2) or (Bounds.Height < 2) then
-    Writeln('######Bounds.Width=', Bounds.Width, ' Bounds.Height=', Bounds.Height);
-    Result := inherited(Bounds);
-
-end;
-
-//override is just to show you that this function is only copying a tpa.
-//No logic related to building the tpa.
-function TTDBotGameState.GetTormentedDemonMSPoints(): TPointArray;  override;
-begin
-  Self.TormentedDemon.Lock.Enter;
-  Result := Self.TormentedDemon.MainScreenPoints.Copy;
-  Self.TormentedDemon.Lock.Leave;
-end;
 
 procedure DebugTD();
 var
   image: TImage;
 begin
   image := Target.GetImage(Target.Bounds);
-  image.DrawTPA(gamestate.GetTormentedDemonMSPoints);
+  image.DrawTPA(GameState.GetTormentedDemonMSPoints);
   image.Show;
-  image.FreeOnTerminate := True;
+  image.Free;
 end;
 
 begin
-  TargetImageLock := TLock.Create;
   OverheadFinder.Setup;
   Map.Setup(Chunk([63,69,64,68], 0)); //TD lair
 
-  //create a threadpool and schedule several tasks which read and cache different parts of the game.
-  //for example, one of the tasks is responsible for finding the tormented demon on screen,
-  //and it's protection prayer. This takes about 20ms to complete and is rescheduled without a
-  //real break (1ms) so our cache of the tormented demon mainscreen points is updated 40-50
-  //times per second which gives me confidence that i've always got fresh data cached and ready to grab.
   GameState.Start;
 
-
-  while true do
+  while True do
   begin
     DebugTD;
-    //Sleep(50);
+    Sleep(50);
   end;
 end.

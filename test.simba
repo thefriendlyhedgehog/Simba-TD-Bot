@@ -1,0 +1,121 @@
+procedure TTDBotGameState.FindTormentedDemon();
+const
+  COMBAT_BOUNDS: TBox = [12040, 32718, 12084, 32782];
+var
+  minimapDot: TPoint;
+  minimapDots: TPointArray;
+  compassAngle: Double;
+  cuboid: TCuboid;
+  cuboids: TCuboidArray;
+  matrix: TIntegerMatrix;
+  points: TPointArray;
+  row: TIntegerArray;
+  i, x, y, color, pointIndex: Integer;
+  hslColor: TColorHSL;
+  overheads: TRSOverheadArray;
+  overhead: TRSOverhead;
+
+  colorClusters: T2DPointArray;
+  nearestOverhead: record index, xDistance: Integer; end;
+  xDistance: Integer;
+  d: double;
+  image: TImage;
+begin
+  MM2MS.Projector.UpdateZoom(Options.GetZoomLevel);
+  d := performancetime;
+  if not (Self.GetPlayerPosition in COMBAT_BOUNDS) then
+    Exit;
+
+  minimapDots := Minimap.GetDots(ERSMinimapDot.NPC);
+  if minimapDots.Length = 0 then
+    Exit;
+
+  compassAngle := Minimap.GetCompassAngle(False);
+  for minimapDot in minimapDots do
+    cuboids += Minimap.Point2MSCuboid(minimapDot, [2.5,2.5,16], compassAngle);
+
+  try
+    image := Target.GetImage(Target.Bounds);
+    image.DrawCuboidArray(cuboids);
+    image.drawcross(Minimap.Vector2MS([minimapdots[0].X, minimapdots[0].y, 26], compassangle), 55);
+    image.Show;
+  finally
+    image.Free;
+  end;
+
+  for cuboid in cuboids do
+  begin
+    matrix := Target.GetColorsMatrix(cuboid.Bounds);
+    SetLength(points, points.Length + matrix.Area);
+    for y := 0 to matrix.Length - 1 do
+    begin
+      row := matrix[y];
+      for x := 0 to row.Length - 1 do
+      begin
+        color := row[x];
+        if (color <> 65280) and (color <> 255) then
+        begin
+          hslColor := ColorToHSL(color);
+          if (hslColor.S > 10) and (hslColor.L > 40) then
+          begin
+            points[pointIndex] := [x,y];
+            Inc(pointIndex);
+          end;
+        end;
+      end;
+    end;
+  end;
+
+  SetLength(points, pointIndex);
+  points := points.Offset(MainScreen.Bounds.TopLeft)
+                  .ExcludeBox(XPBar.Bounds)
+                  //TODO exclude playerbox
+                  .Grow(4)
+                  .Erode(3)
+                  ;
+
+  if points.Length = 0 then
+    Exit;
+
+  overheads := OverheadFinder.Find([ERSOverhead.MELEE, ERSOverhead.RANGED, ERSOverhead.MAGIC], 5);
+  if Length(overheads) = 0 then
+    Exit;
+
+  for overhead in overheads do
+    with overhead.Position do
+      points := points.ExcludeBox([X-14,Y-14,X+14,Y+14]);
+
+  if points.Length = 0 then
+    Exit;
+
+  colorClusters := points.Cluster(2);//TODO normalize
+  points := colorClusters.Largest;
+  if points.Length < MainScreen.NormalizeDistance(500) then
+    Exit;
+  Self.TormentedDemon.Lock.Enter;
+  Self.TormentedDemon.MainScreenPoints := points.Copy;
+  Self.TormentedDemon.Lock.Leave;
+
+  nearestOverhead.index := -1;
+  points.SortByY(True);
+  for i := 0 to High(overheads) do
+  begin
+    if overheads[i].Position.Y <= points[0].Y then
+      Continue;
+    xDistance := Abs(overheads[i].Position.X - points.Mean.X);
+    if (nearestOverhead.index = -1) or (xDistance < nearestOverhead.xDistance) then
+      nearestOverhead := [i, xDistance];
+  end;
+
+  if nearestOverhead.index > -1 then
+  begin
+    Self.TormentedDemon.Lock.Enter;
+    case overheads[nearestOverhead.index].Overhead of
+      ERSOverhead.MELEE:  Self.TormentedDemon.ProtectionPrayer := ERSPrayer.PROTECT_FROM_MELEE;
+      ERSOverhead.MAGIC:  Self.TormentedDemon.ProtectionPrayer := ERSPrayer.PROTECT_FROM_MAGIC;
+      ERSOverhead.RANGED: Self.TormentedDemon.ProtectionPrayer := ERSPrayer.PROTECT_FROM_MISSILES;
+    end;
+    Self.TormentedDemon.Lock.Leave;
+  end;
+  writeln 'findtormenteddemon took ' + tostr(performancetime - d);
+end;
