@@ -189,17 +189,105 @@ begin
 end;
 
 procedure TTDBotGameState.FindTormentedDemon();
+type
+  TMMDotOvhCombo = record
+    overhead: TRSOverhead;
+    minimapDot: TPoint;
+  end;
+
+  function FindAndRemoveClosest(var overheads: TRSOverheadArray; out overhead: TRSOverhead; point: TPoint): Boolean;
+  var
+    i: Integer;
+    nearestOverhead: record index: Integer; distance: Double; end;
+    distance: Double;
+  begin
+    for i := 0 to High(overheads) do
+    begin
+      distance := overheads[i].Position.DistanceTo(point);
+      if (nearestOverhead.index = -1) or (distance < nearestOverhead.distance) then
+        nearestOverhead := [i, distance];
+    end;
+
+    if nearestOverhead.distance > 20 then
+      Exit;
+
+    overhead := overheads[nearestOverhead.index];
+    overheads.Remove(overheads[nearestOverhead.index]);
+    Result := True;
+  end;
+
 const
   COMBAT_BOUNDS: TBox = [12040, 32718, 12084, 32782];
 var
   d: double;
+
+  minimapDot: TPoint;
+  minimapDots: TPointArray;
+  overhead: TRSOverhead;
+  overheads: TRSOverheadArray;
+  compassAngle: Double;
+  predictedOverheadPt: TPoint;
+  combos: array of
+    record
+      overhead: TRSOverhead;
+      minimapDot: TPoint;
+    end;
+  i: Int32;
+  cuboid: TCuboid;
+  points: TPointArray;
 begin
+  //TODO handle exits differently?? maybe do nothing but timestamp the last update.
+  //possibly run a cleanup tasks, log average task times, if last update > average * x% then cleanup assignments
+
   d := performancetime;
   if not (Self.GetPlayerPosition in COMBAT_BOUNDS) then
+  begin
+    writeln 'early exit, not in combat bounds';
     Exit;
+  end;
 
+  minimapDots := Minimap.GetDots(ERSMinimapDot.NPC);
+  overheads := OverheadFinder.Find([ERSOverhead.MELEE, ERSOverhead.MAGIC, ERSOverhead.RANGED]);
+  if (minimapDots.Length = 0) or (overheads.Length = 0) then
+  begin
+    writeln('early exit, mmdots found=', minimapDots.Length, ' overheads found=', overheads.Length);
+    Exit;
+  end;
 
+  compassAngle := Minimap.GetCompassAngle(False);
+  for minimapDot in minimapDots do
+  begin
+    if overheads.Length = 0 then
+      Break;
+    predictedOverheadPt := Minimap.Vector2MS(minimapDot.ToVec3(26), compassAngle);
+    if FindAndRemoveClosest(overheads, overhead, predictedOverheadPt) then
+      combos += [overhead, minimapDot];
+  end;
 
+  if combos.Length <> 1 then
+  begin
+    writeln('early exit, combo length mismatch ', combos.Length);
+    Exit; //TODO handle more than 1 td??
+  end;
+  //[$3F589A, 17.700, EColorSpace.HSV, [1.207, 0.766, 1.029]]
+
+  cuboid := Minimap.Point2MSCuboid(combos[0].minimapDot, [2.6,2.6,14], compassAngle);
+  points := Target.FindColor($3F589A, 17.7, EColorSpace.HSV, [1.207,0.766,1.029], cuboid.Bounds);
+  points := points.Difference(cuboid.Filter(points)).Grow(3).Erode(4).Cluster(1).Largest;
+
+  if points.Length = 0 then
+  begin
+    writeln 'early exit, no colors found';
+    Exit;
+  end;
+
+  Self.SetTormentedDemonMSPoints(points);
+  Self.SetTormentedDemonPosition(combos[0].minimapDot - Minimap.Center + Self.GetPlayerPosition);
+  case combos[0].overhead.Overhead of
+    ERSOverhead.MELEE: Self.SetTormentedDemonProtectionPrayer(ERSPrayer.PROTECT_FROM_MELEE);
+    ERSOverhead.RANGED: Self.SetTormentedDemonProtectionPrayer(ERSPrayer.PROTECT_FROM_MISSILES);
+    ERSOverhead.MAGIC: Self.SetTormentedDemonProtectionPrayer(ERSPrayer.PROTECT_FROM_MAGIC);
+  end;
   writeln 'TTDBotGameState.FindTormentedDemon ' + tostr(performancetime - d);
 end;
 

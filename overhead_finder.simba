@@ -53,7 +53,7 @@ var
 begin
   d := PerformanceTime;
 
-  searchingBounds := Target.FindColor($74B0C7, 2.844, EColorSpace.RGB, [0.681, 1.299, 1.021], MainScreen.Bounds).Cluster(5).BoundsArray;
+  searchingBounds := Target.FindColor($74B0C7, 2.844, EColorSpace.RGB, [0.681, 1.299, 1.021], MainScreen.Bounds).Cluster(8).BoundsArray;
   if searchingBounds.Length = 0 then
     Exit;
 
