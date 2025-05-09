@@ -147,26 +147,35 @@ begin
 end;
 
 procedure TTDCombat.Action_BeginFight();
+var
+  tdPosition: TPoint;
+  hitsplatTimer: TCountdown;
+  hitsplats: TRSHitSplatArray;
 begin
   Self.DoAction(ETDCombatAction.ATTACK);
   //Confirm the results of ATTACK action
   if not Self.IsAttacking then
     Exit;
 
-  if Self.Loadouts[Self.CurrentLoadout].Style = ERSCombatStyle.MELEE then
+  hitsplatTimer.Start(600*Ceil(GameState.GetPlayerPosition.DistanceTo(GameState.GetTormentedDemonPosition)*4));
+
+  while hitsplatTimer.Remaining > 0 do
   begin
-    SleepUntil(False, 100, 600*Ceil(GameState.GetPlayerPosition.DistanceTo(GameState.GetTormentedDemonPosition)*4));
-    //TODO look for hitsplats or something to end sleep until
-    //replace sleep until with a real loop or move waitforcombat into its own function.
-    //async mouse to prayers
+    if TRSHitsplat.find(hitsplats, [GameState.GetTormentedDemonMSPoints.Bounds]) then
+      Break;
+
+    //async mouse to prayers?
   end;
 
-  if GameState.GetTormentedDemonPosition.DistanceTo(GameState.GetPlayerPosition) <= 12 then
+  tdPosition := GameState.GetTormentedDemonPosition;
+
+  if GameState.GetTormentedDemonPosition.DistanceTo(GameState.GetPlayerPosition) <= 16 then
     Self.DoAction(ETDCombatAction.STEP_AWAY);
 
-  Sleep(600);
+  Sleep(600);  //static wait??
+
   if GameState.GetTormentedDemonPosition.DistanceTo(GameState.GetPlayerPosition)
-    < GameState.GetTormentedDemonPosition.DistanceTo(GameState.GetPlayerPosition) then
+    < tdPosition.DistanceTo(GameState.GetPlayerPosition) then
   begin
     GameState.SetTormentedDemonCombatStyle(ERSCombatStyle.MELEE);
   end else
@@ -181,7 +190,8 @@ var
 begin
   if GameState.GetTormentedDemonMSPoints.Length < 1 then
     Exit;
-  ASync.MouseMove(GameState.GetTormentedDemonMSPoints.SortFrom(Mouse.Position).Last);
+
+  ASync.MouseMove(GameState.GetTormentedDemonMSPoints.Mean);
   timeout.Start(5000);
   //while mouse is moving to the center of tormented demon we check for proper uptext and upon
   //finding the uptext, we wait at a random range of 100ms to 2 seconds or when mouse movement is
@@ -189,11 +199,10 @@ begin
   //of the demon while randomly clicking on the demon on the way but at a random spot and time.
   while (timeout.Remaining > 0) and ASync.MouseMoving do
   begin
-    Sleep(10);
     if not MainScreen.IsUpText(['Attack', 'Tormented', 'Demon', '450']) then
       Continue;
 
-    SleepUntil(not ASync.MouseMoving, 100, RandomLeft(100, 2000));
+    SleepUntil(not ASync.MouseMoving, 100, RandomLeft(10, 2000));
 
     if MainScreen.IsUpText(['Attack', 'Tormented', 'Demon', '450']) then
       Break;

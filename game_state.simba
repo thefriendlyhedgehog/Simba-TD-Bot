@@ -288,7 +288,8 @@ begin
     ERSOverhead.RANGED: Self.SetTormentedDemonProtectionPrayer(ERSPrayer.PROTECT_FROM_MISSILES);
     ERSOverhead.MAGIC: Self.SetTormentedDemonProtectionPrayer(ERSPrayer.PROTECT_FROM_MAGIC);
   end;
-  writeln 'TTDBotGameState.FindTormentedDemon ' + tostr(performancetime - d);
+  if (performancetime - d) > 5 then
+    writeln 'TTDBotGameState.FindTormentedDemon ' + tostr(performancetime - d);
 end;
 
 procedure TTDBotGameState.Start();

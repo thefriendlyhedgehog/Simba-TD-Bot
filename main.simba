@@ -2,25 +2,14 @@
 {$INCLUDE_ONCE WaspLib/osrs.simba}
 {$INCLUDE_ONCE combat.simba}
 
-procedure DebugTD();
-var
-  image: TImage;
-begin
-  image := Target.GetImage(Target.Bounds);
-  image.DrawTPA(GameState.GetTormentedDemonMSPoints);
-  image.Show;
-  image.Free;
-end;
-
 begin
   OverheadFinder.Setup;
   Map.Setup(Chunk([63,69,64,68], 0)); //TD lair
 
   GameState.Start;
+  TDCombat.Init;
+  Sleep(5000);
+  TDCombat.Fight;
 
-  while True do
-  begin
-    DebugTD;
-    Sleep(50);
-  end;
+  Sleep(50000000);
 end.
