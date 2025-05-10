@@ -3,10 +3,52 @@
 {$include_once consumables.simba}
 
 type
-  TCombatLoadout = record
+  TRSCombatLoadout = record
     Gear: array[ERSEquipment] of TRSItem;
     OffensivePrayers: TRSPrayerSet;
     Boost: set of ERSConsumableType;
     Style: ERSCombatStyle;
     AutoCastSpell: ERSSpell;
   end;
+
+var
+  MeleeTestLoadout, RangedTestLoadout: TRSCombatLoadout;
+
+begin
+  with MeleeTestLoadout do
+  begin
+    Gear[ERSEquipment.HEAD] := 'Purple slayer helmet (i)';
+    Gear[ERSEquipment.CAPE] := 'Fire cape';
+    Gear[ERSEquipment.FEET] := 'Aranea boots';
+    Gear[ERSEquipment.HANDS] := 'Ferocious gloves';
+    Gear[ERSEquipment.RING] := 'Berserker ring (i)';
+
+    Gear[ERSEquipment.NECK] := 'Amulet of torture';
+    Gear[ERSEquipment.WEAPON] := 'Arclight';
+    Gear[ERSEquipment.BODY] := 'Bandos chestplate';
+    Gear[ERSEquipment.SHIELD] := 'Avernic defender (l)';
+    Gear[ERSEquipment.LEGS] := 'Bandos tassets';
+
+    OffensivePrayers := [ERSPrayer.PIETY];
+    Boost := [ERSConsumableType.STRENGTH_BOOST];
+    Style := ERSCombatStyle.MELEE;
+  end;
+
+  with RangedTestLoadout do
+  begin
+    Gear[ERSEquipment.HEAD] := 'Purple slayer helmet (i)';
+    Gear[ERSEquipment.CAPE] := 'Fire cape';
+    Gear[ERSEquipment.FEET] := 'Aranea boots';
+    Gear[ERSEquipment.HANDS] := 'Ferocious gloves';
+    Gear[ERSEquipment.RING] := 'Berserker ring (i)';
+
+    Gear[ERSEquipment.NECK] := 'Necklace of anguish';
+    Gear[ERSEquipment.WEAPON] := 'Bow of faerdhinen (c)';
+    Gear[ERSEquipment.BODY] := 'Crystal body';
+    Gear[ERSEquipment.LEGS] := 'Crystal legs';
+
+    OffensivePrayers := [ERSPrayer.RIGOUR];
+    Boost := [ERSConsumableType.RANGING_BOOST];
+    Style := ERSCombatStyle.RANGED;
+  end;
+end;

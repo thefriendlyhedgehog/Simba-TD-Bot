@@ -5,10 +5,10 @@
 begin
   OverheadFinder.Setup;
   Map.Setup(Chunk([63,69,64,68], 0)); //TD lair
-
   GameState.Start;
-  TDCombat.Init;
-  Sleep(5000);
+  TDCombat.Init([MeleeTestLoadout, RangedTestLoadout]);
+  Sleep(3000);
+  writeln 'Start';
   TDCombat.Fight;
 
   Sleep(50000000);

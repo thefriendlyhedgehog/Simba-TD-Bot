@@ -2,6 +2,7 @@
 {$include_once task_manager.simba}
 {$INCLUDE_ONCE overhead_finder.simba}
 {$INCLUDE_ONCE combat_types.simba}
+{$INCLUDE_ONCE tbox.simba}
 
 type
   TTDBotGameState = record
@@ -20,7 +21,7 @@ type
     TormentedDemon: record
       Lock: TLock;
 
-      ProtectionPrayer: ERSPrayer;
+      ProtectedStyle: ERSCombatStyle;
       CombatStyle: ERSCombatStyle;
       MainScreenPoints: TPointArray;
       Position: TPoint;
@@ -83,11 +84,18 @@ var
   emptySlots: TIntegerArray;
   discovered, items: TRSItemArray;
 begin
+  Sleep(2000);
   case GameTabs.GetCurrent of
     ERSGameTab.INVENTORY:
     begin
+      if ChooseOption.IsOpen and ChooseOption.Bounds.Intersects(GameTab.Bounds) then
+        Exit;
+
       emptySlots := Inventory.Slots.GetEmpty;
+      writeln('Empty slots:', emptyslots);
       discovered := Inventory.Items.DiscoverAll;
+      writeln('discovered', discovered);
+      writeln('Length:', emptySlots.Length + discovered.Length);
       if emptySlots.Length + discovered.Length <> 28 then
         Exit;
 
@@ -174,17 +182,17 @@ begin
   Self.TormentedDemon.Lock.Leave;
 end;
 
-procedure TTDBotGameState.SetTormentedDemonProtectionPrayer(prayer: ERSPrayer);
+procedure TTDBotGameState.SetTormentedDemonProtectedStyle(style: ERSCombatStyle);
 begin
   Self.TormentedDemon.Lock.Enter;
-  Self.TormentedDemon.ProtectionPrayer := prayer;
+  Self.TormentedDemon.ProtectedStyle := style;
   Self.TormentedDemon.Lock.Leave;
 end;
 
-function TTDBotGameState.GetTormentedDemonProtectionPrayer(): ERSPrayer;
+function TTDBotGameState.GetTormentedDemonProtectedStyle(): ERSCombatStyle;
 begin
   Self.TormentedDemon.Lock.Enter;
-  Result := Self.TormentedDemon.ProtectionPrayer;
+  Result := Self.TormentedDemon.ProtectedStyle;
   Self.TormentedDemon.Lock.Leave;
 end;
 
@@ -242,7 +250,6 @@ begin
   d := performancetime;
   if not (Self.GetPlayerPosition in COMBAT_BOUNDS) then
   begin
-    writeln 'early exit, not in combat bounds';
     Exit;
   end;
 
@@ -250,7 +257,6 @@ begin
   overheads := OverheadFinder.Find([ERSOverhead.MELEE, ERSOverhead.MAGIC, ERSOverhead.RANGED]);
   if (minimapDots.Length = 0) or (overheads.Length = 0) then
   begin
-    writeln('early exit, mmdots found=', minimapDots.Length, ' overheads found=', overheads.Length);
     Exit;
   end;
 
@@ -266,10 +272,8 @@ begin
 
   if combos.Length <> 1 then
   begin
-    writeln('early exit, combo length mismatch ', combos.Length);
     Exit; //TODO handle more than 1 td??
   end;
-  //[$3F589A, 17.700, EColorSpace.HSV, [1.207, 0.766, 1.029]]
 
   cuboid := Minimap.Point2MSCuboid(combos[0].minimapDot, [2.6,2.6,14], compassAngle);
   points := Target.FindColor($3F589A, 17.7, EColorSpace.HSV, [1.207,0.766,1.029], cuboid.Bounds);
@@ -277,18 +281,18 @@ begin
 
   if points.Length = 0 then
   begin
-    writeln 'early exit, no colors found';
     Exit;
   end;
 
   Self.SetTormentedDemonMSPoints(points);
   Self.SetTormentedDemonPosition(combos[0].minimapDot - Minimap.Center + Self.GetPlayerPosition);
   case combos[0].overhead.Overhead of
-    ERSOverhead.MELEE: Self.SetTormentedDemonProtectionPrayer(ERSPrayer.PROTECT_FROM_MELEE);
-    ERSOverhead.RANGED: Self.SetTormentedDemonProtectionPrayer(ERSPrayer.PROTECT_FROM_MISSILES);
-    ERSOverhead.MAGIC: Self.SetTormentedDemonProtectionPrayer(ERSPrayer.PROTECT_FROM_MAGIC);
+    ERSOverhead.MELEE: Self.SetTormentedDemonProtectedStyle(ERSCombatStyle.MELEE);
+    ERSOverhead.RANGED: Self.SetTormentedDemonProtectedStyle(ERSCombatStyle.RANGED);
+    ERSOverhead.MAGIC: Self.SetTormentedDemonProtectedStyle(ERSCombatStyle.MAGIC);
   end;
-  if (performancetime - d) > 5 then
+
+  if (performancetime - d) > 7 then
     writeln 'TTDBotGameState.FindTormentedDemon ' + tostr(performancetime - d);
 end;
 

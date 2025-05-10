@@ -1,0 +1,7 @@
+function TBox.Intersects(other: TBox): Boolean;
+begin
+  Result :=
+    (Self.X1 < other.X2) and (Self.X2 > other.X1) and
+    (Self.Y1 < other.Y2) and (Self.Y2 > other.Y1);
+end;
+
