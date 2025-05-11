@@ -5,78 +5,81 @@
 {$INCLUDE_ONCE tbox.simba}
 {$INCLUDE_ONCE inventory.simba}
 
+const
+  MAX_PROJECTILE_SAMPLES = 20;
+  MAX_PROJECTILE_SAMPLE_EXPIRE_MS = 2000;
+
 type
+  TProjectileSample = record
+    Style: ERSCombatStyle;
+    Timestamp: UInt64;
+  end;
+
   TTDBotGameState = record
     TaskManager: TReschedulingTaskManager;
-    ClockModified: Boolean;
 
-    Player: record
-      Lock: TLock;
+    pLock: TLock;
+    pPosition: TPoint;
+    pActivePrayers: TRSPrayerSet;
+    pInventoryItems: TRSDiscoveredInventory;
 
-      Position: TPoint;
-
-      ActivePrayers: TRSPrayerSet;
-      InventoryItems: TRSDiscoveredInventory;
-    end;
-
-    TormentedDemon: record
-      Lock: TLock;
-
-      ProtectedStyle: ERSCombatStyle;
-      CombatStyle: ERSCombatStyle;
-      MainScreenPoints: TPointArray;
-      Position: TPoint;
-      Health: Integer;
-      IsCastingSnare: Boolean;
-    end;
+    tdLock: TLock;
+    tdProtectedStyle: ERSCombatStyle;
+    tdCombatStyle: ERSCombatStyle;
+    tdMainScreenPoints: TPointArray;
+    tdPosition: TPoint;
+    tdHealth: Integer;
+    tdIsCastingSnare: Boolean;
+    tdProjSampleBuffer: array[1..MAX_PROJECTILE_SAMPLES] of TProjectileSample;
+    tdProjSampleBufferIndex: Integer;
   end;
 
 procedure TTDBotGameState.SetPlayerPosition(position: TPoint);
 begin
-  Self.Player.Lock.Enter;
-  Self.Player.Position := position;
-  Self.Player.Lock.Leave;
+  Self.pLock.Enter;
+  Self.pPosition := position;
+  Self.pLock.Leave;
 end;
 
 function TTDBotGameState.GetPlayerPosition(): TPoint;
 begin
-  Self.Player.Lock.Enter;
-  Result := Self.Player.Position;
-  Self.Player.Lock.Leave;
+  Self.pLock.Enter;
+  Result := Self.pPosition;
+  Self.pLock.Leave;
 end;
 
 procedure TTDBotGameState.ReadPlayerPosition();
 begin
-  if RSClient.IsLoggedIn then
+  //if RSClient.IsLoggedIn then
    Self.SetPlayerPosition(Map.Position);
 end;
 
 procedure TTDBotGameState.SetInventoryItems(items: TRSDiscoveredInventory);
 begin
-  Self.Player.Lock.Enter;
-  Self.Player.InventoryItems := items.Copy;
-  Self.Player.Lock.Leave;
+  Self.pLock.Enter;
+  Self.pInventoryItems := items.Copy;
+  Self.pLock.Leave;
 end;
 
 function TTDBotGameState.GetInventoryItems(): TRSDiscoveredInventory;
 begin
-  Self.Player.Lock.Enter;
-  Result := Self.Player.InventoryItems.Copy;
-  Self.Player.Lock.Leave;
+  Self.pLock.Enter;
+  Result := Self.pInventoryItems.Copy;
+  Self.pLock.Leave;
 end;
 
 procedure TTDBotGameState.SetPlayerActivePrayers(prayers: TRSPrayerSet);
 begin
-  Self.Player.Lock.Enter;
-  Self.Player.ActivePrayers := prayers;
-  Self.Player.Lock.Leave;
+  Self.pLock.Enter;
+  Self.pActivePrayers := prayers;
+  Self.pLock.Leave;
 end;
 
 function TTDBotGameState.GetPlayerActivePrayers(): TRSPrayerSet;
 begin
-  Self.Player.Lock.Enter;
-  Result := Self.Player.ActivePrayers;
-  Self.Player.Lock.Leave;
+  Self.pLock.Enter;
+  Result := Self.pActivePrayers;
+  Self.pLock.Leave;
 end;
 
 procedure TTDBotGameState.ReadInventoryTab();
@@ -108,9 +111,9 @@ end;
 
 function TTDBotGameState.IsPlayerSnared(): Boolean;
 begin
-  Self.Player.Lock.Enter;
-  Result := Self.TormentedDemon.IsCastingSnare;
-  Self.Player.Lock.Leave;
+  Self.pLock.Enter;
+  Result := Self.tdIsCastingSnare;
+  Self.pLock.Leave;
 end;
 
 procedure TTDBotGameState.FindTormentedDemonSnare();
@@ -126,65 +129,65 @@ begin
       MainScreen.NormalizeDistance(20),
       MainScreen.NormalizeDistance(30));
 
-  Self.TormentedDemon.Lock.Enter;
-  Self.TormentedDemon.IsCastingSnare := snareVisible;
-  Self.TormentedDemon.Lock.Leave;
+  Self.tdLock.Enter;
+  Self.tdIsCastingSnare := snareVisible;
+  Self.tdLock.Leave;
 end;
 
 procedure TTDBotGameState.SetTormentedDemonMSPoints(points: TPointArray);
 begin
-  Self.TormentedDemon.Lock.Enter;
-  Self.TormentedDemon.MainScreenPoints := points.copy;
-  Self.TormentedDemon.Lock.Leave;
+  Self.tdLock.Enter;
+  Self.tdMainScreenPoints := points.copy;
+  Self.tdLock.Leave;
 end;
 
 function TTDBotGameState.GetTormentedDemonMSPoints(): TPointArray;
 begin
-  Self.TormentedDemon.Lock.Enter;
-  Result := Self.TormentedDemon.MainScreenPoints.Copy;
-  Self.TormentedDemon.Lock.Leave;
+  Self.tdLock.Enter;
+  Result := Self.tdMainScreenPoints.Copy;
+  Self.tdLock.Leave;
 end;
 
 procedure TTDBotGameState.SetTormentedDemonPosition(position: TPoint);
 begin
-  Self.TormentedDemon.Lock.Enter;
-  Self.TormentedDemon.Position := position;
-  Self.TormentedDemon.Lock.Leave;
+  Self.tdLock.Enter;
+  Self.tdPosition := position;
+  Self.tdLock.Leave;
 end;
 
 function TTDBotGameState.GetTormentedDemonPosition(): TPoint;
 begin
-  Self.TormentedDemon.Lock.Enter;
-  Result := Self.TormentedDemon.Position;
-  Self.TormentedDemon.Lock.Leave;
+  Self.tdLock.Enter;
+  Result := Self.tdPosition;
+  Self.tdLock.Leave;
 end;
 
 procedure TTDBotGameState.SetTormentedDemonCombatStyle(style: ERSCombatStyle);
 begin
-  Self.TormentedDemon.Lock.Enter;
-  Self.TormentedDemon.CombatStyle := style;
-  Self.TormentedDemon.Lock.Leave;
+  Self.tdLock.Enter;
+  Self.tdCombatStyle := style;
+  Self.tdLock.Leave;
 end;
 
 function TTDBotGameState.GetTormentedDemonCombatStyle(): ERSCombatStyle;
 begin
-  Self.TormentedDemon.Lock.Enter;
-  Result := Self.TormentedDemon.CombatStyle;
-  Self.TormentedDemon.Lock.Leave;
+  Self.tdLock.Enter;
+  Result := Self.tdCombatStyle;
+  Self.tdLock.Leave;
 end;
 
 procedure TTDBotGameState.SetTormentedDemonProtectedStyle(style: ERSCombatStyle);
 begin
-  Self.TormentedDemon.Lock.Enter;
-  Self.TormentedDemon.ProtectedStyle := style;
-  Self.TormentedDemon.Lock.Leave;
+  Self.tdLock.Enter;
+  Self.tdProtectedStyle := style;
+  Self.tdLock.Leave;
 end;
 
 function TTDBotGameState.GetTormentedDemonProtectedStyle(): ERSCombatStyle;
 begin
-  Self.TormentedDemon.Lock.Enter;
-  Result := Self.TormentedDemon.ProtectedStyle;
-  Self.TormentedDemon.Lock.Leave;
+  Self.tdLock.Enter;
+  Result := Self.tdProtectedStyle;
+  Self.tdLock.Leave;
 end;
 
 procedure TTDBotGameState.FindTormentedDemon();
@@ -287,16 +290,112 @@ begin
     writeln 'TTDBotGameState.FindTormentedDemon ' + tostr(performancetime - d);
 end;
 
+procedure TTDBotGameState.AddProjectileSample(detectedStyle: ERSCombatStyle);
+begin
+  Self.tdLock.Enter;
+  with Self.tdProjSampleBuffer[Self.tdProjSampleBufferIndex] do
+  begin
+    Style := detectedStyle;
+    TimeStamp := Time;
+  end;
+
+  Inc(Self.tdProjSampleBufferIndex);
+  if Self.tdProjSampleBufferIndex > High(Self.tdProjSampleBuffer) then
+    Self.tdProjSampleBufferIndex := Low(Self.tdProjSampleBuffer);
+
+  Self.tdLock.Leave;
+end;
+
+function TTDBotGameState.GetProjectileStyleConfidence(out style: ERSCombatStyle): Single;
+var
+  currentTime: UInt64;
+  sample: TProjectileSample;
+  total, best: Integer;
+  counts: array[ERSCombatStyle.MAGIC..ERSCombatStyle.RANGED] of Integer;
+begin
+  currentTime := GetTimeRunning;
+  Self.tdLock.Enter;
+  for sample in Self.tdProjSampleBuffer do
+  begin
+    if (currentTime - sample.Timestamp) > MAX_PROJECTILE_SAMPLE_EXPIRE_MS then
+      Continue;
+    Inc(counts[sample.Style]);
+    Inc(total);
+  end;
+
+  if total = 0 then
+    Exit;
+
+  if counts[ERSCombatStyle.MAGIC] > counts[ERSCombatStyle.RANGED] then
+    style := ERSCombatStyle.MAGIC
+  else if counts[ERSCombatStyle.MAGIC] < counts[ERSCombatStyle.RANGED] then
+    style := ERSCombatStyle.RANGED
+  else
+    style := ERSCombatStyle.UNKNOWN;
+
+  Result := counts[style] / total;
+  Self.tdLock.Leave;
+end;
+
+function TTDBotGameState.FindMagicProjectile(searchArea: TBox): Boolean;
+const
+  PROJECTILE_COLOR: TColorTolerance = [$40B2DF, 4.405, EColorSpace.HSL, [1.747, 0.513, 0.742]];
+  MIN_RADIUS = 5; MAX_RADIUS = 10;
+  MIN_DENSITY = 0.4; MAX_DENSITY = 0.65;
+var
+  points, cluster: TPointArray;
+  i: Integer;
+  circ: TCircle;
+  minRadiusNorm, maxRadiusNorm: Integer;
+begin
+  points := Target.FindColor(PROJECTILE_COLOR, searchArea)
+    .ExcludeBox(MainScreen.GetPlayerBox)
+    .ExcludePoints(Self.GetTormentedDemonMSPoints)
+    .Grow(MainScreen.NormalizeDistance(2))
+    .Erode(MainScreen.NormalizeDistance(1));
+
+  minRadiusNorm := MainScreen.NormalizeDistance(MIN_RADIUS);
+
+  if points.Length < (Pi * Sqr(minRadiusNorm) * MIN_DENSITY) then
+    Exit;
+
+  maxRadiusNorm := MainScreen.NormalizeDistance(MAX_RADIUS);
+
+  for cluster in points.Cluster(1.5) do
+  begin
+    circ := cluster.MinAreaCircle;
+    if InRange(circ.Radius, minRadiusNorm, maxRadiusNorm) and InRange(cluster.Length / circ.Area, MIN_DENSITY, MAX_DENSITY) then
+        Exit(True);
+  end;
+end;
+
+function TTDBotGameState.FindRangedProjectile(searchArea: TBox): Boolean;
+begin
+
+end;
+
+procedure TTDBotGameState.FindTormentedDemonProjectiles();
+var
+  searchArea: TBox;
+begin
+  searchArea := MainScreen.GetPlayerBox.Combine(Self.GetTormentedDemonMSPoints.Bounds);
+  if Self.FindMagicProjectile(searchArea) then
+    Self.AddProjectileSample(ERSCombatStyle.MAGIC);
+  if Self.FindRangedProjectile(searchArea) then
+    Self.AddProjectileSample(ERSCombatStyle.RANGED);
+end;
+
 procedure TTDBotGameState.Start();
 begin
-  Self.Player.Lock := TLock.Create;
-  Self.TormentedDemon.Lock := TLock.Create;
+  Self.pLock := TLock.Create;
+  Self.tdLock := TLock.Create;
   Self.TaskManager.Init('game_state', CPUInfo.CoreCount);
 
   Self.TaskManager.Schedule(@Self.ReadPlayerPosition);
   Self.TaskManager.Schedule(@Self.ReadGameTabs);
   Self.TaskManager.Schedule(@Self.FindTormentedDemon);
   Self.TaskManager.Schedule(@Self.FindTormentedDemonSnare);
+  Self.TaskManager.Schedule(@Self.FindTormentedDemonProjectiles);
 
   WriteLn('ReadPlayerPosition: ', ToStr(@Self.ReadPlayerPosition));
   Writeln('FindTormentedDemon: ', ToStr(@Self.FindTormentedDemon));

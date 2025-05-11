@@ -298,7 +298,7 @@ begin
       Break;
 
     rotation := EdgeWeightedRandom(4, -30, 30);
-    destination := destination.Rotate(rotation, GameState.TormentedDemon.Position);
+    destination := destination.Rotate(rotation, GameState.GetTormentedDemonPosition);
     Self.DebugLn('Rotated destination by %.2f degrees around demon to %s', [rotation, ToStr(destination)]);
   end;
 
