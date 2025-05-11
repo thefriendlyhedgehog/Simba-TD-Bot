@@ -3,6 +3,7 @@
 {$INCLUDE_ONCE overhead_finder.simba}
 {$INCLUDE_ONCE combat_types.simba}
 {$INCLUDE_ONCE tbox.simba}
+{$INCLUDE_ONCE inventory.simba}
 
 type
   TTDBotGameState = record
@@ -15,7 +16,7 @@ type
       Position: TPoint;
 
       ActivePrayers: TRSPrayerSet;
-      InventoryItems: TRSItemArray;
+      InventoryItems: TRSDiscoveredInventory;
     end;
 
     TormentedDemon: record
@@ -50,14 +51,14 @@ begin
    Self.SetPlayerPosition(Map.Position);
 end;
 
-procedure TTDBotGameState.SetInventoryItems(items: TRSItemArray);
+procedure TTDBotGameState.SetInventoryItems(items: TRSDiscoveredInventory);
 begin
   Self.Player.Lock.Enter;
   Self.Player.InventoryItems := items.Copy;
   Self.Player.Lock.Leave;
 end;
 
-function TTDBotGameState.GetInventoryItems(): TRSItemArray;
+function TTDBotGameState.GetInventoryItems(): TRSDiscoveredInventory;
 begin
   Self.Player.Lock.Enter;
   Result := Self.Player.InventoryItems.Copy;
@@ -78,42 +79,32 @@ begin
   Self.Player.Lock.Leave;
 end;
 
-procedure TTDBotGameState.ReadGameTabs();
-var
-  slot, i: Integer;
-  emptySlots: TIntegerArray;
-  discovered, items: TRSItemArray;
+procedure TTDBotGameState.ReadInventoryTab();
 begin
-  Sleep(2000);
-  case GameTabs.GetCurrent of
-    ERSGameTab.INVENTORY:
-    begin
-      if ChooseOption.IsOpen and ChooseOption.Bounds.Intersects(GameTab.Bounds) then
-        Exit;
+  if ChooseOption.IsOpen and ChooseOption.Bounds.Intersects(GameTab.Bounds) then
+    Exit;
 
-      emptySlots := Inventory.Slots.GetEmpty;
-      writeln('Empty slots:', emptyslots);
-      discovered := Inventory.Items.DiscoverAll;
-      writeln('discovered', discovered);
-      writeln('Length:', emptySlots.Length + discovered.Length);
-      if emptySlots.Length + discovered.Length <> 28 then
-        Exit;
-
-      SetLength(items, 28);
-      for slot := 0 to 27 do
-      begin
-        if slot in emptySlots then
-          Continue;
-
-        items[slot] := discovered[i];
-        Inc(i);
-      end;
-      Self.SetInventoryItems(items);
-    end;
-
-    ERSGameTab.PRAYER: Self.SetPlayerActivePrayers(Prayer.GetActivePrayers);
-  end;
+  Self.SetInventoryItems(Inventory.Items.DiscoverAllEx);
 end;
+
+procedure TTDBotGameState.ReadPrayerTab();
+var
+  b: TBox;
+begin
+  //triple ensure that the prayer tab is open to prevent false results.
+  if Prayer.IsOpen and Prayer.Find(ERSPrayer.THICK_SKIN, b) and Prayer.Find(ERSPrayer.PROTECT_FROM_MELEE, b) then
+    Self.SetPlayerActivePrayers(Prayer.GetActivePrayers);
+end;
+
+procedure TTDBotGameState.ReadGameTabs();
+begin
+  case GameTabs.GetCurrent of
+    ERSGameTab.INVENTORY: Self.ReadInventoryTab;
+    ERSGameTab.PRAYER: Self.ReadPrayerTab;
+  end;
+  Sleep(50);
+end;
+
 
 function TTDBotGameState.IsPlayerSnared(): Boolean;
 begin

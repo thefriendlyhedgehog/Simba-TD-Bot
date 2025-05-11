@@ -3,6 +3,7 @@
 type
   ERSCombatStyle = enum(
     NONE,
+    UNKNOWN,
     MAGIC,
     RANGED,
     MELEE

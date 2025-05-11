@@ -7,9 +7,12 @@ begin
   Map.Setup(Chunk([63,69,64,68], 0)); //TD lair
   GameState.Start;
   TDCombat.Init([MeleeTestLoadout, RangedTestLoadout]);
+
+
   Sleep(3000);
   writeln 'Start';
   TDCombat.Fight;
 
   Sleep(50000000);
+
 end.

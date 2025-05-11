@@ -67,7 +67,6 @@ type
     ActiveLoadoutIndex: Integer;
 
     IsAttacking: Boolean;
-
   end;
 
 procedure TTDCombat.DebugLn(text: String); begin
@@ -115,12 +114,26 @@ begin
 end;
 
 function TTDCombat.ShouldChangePrayer(): Boolean;
+var
+  requiredPrayers, activePrayers: TRSPrayerSet;
 begin
-  if not (ERSPrayer(Ord(GameState.GetTormentedDemonCombatStyle)) in GameState.GetPlayerActivePrayers) then
-    Exit(True);
+  activePrayers := GameState.GetPlayerActivePrayers;
 
-  if (Self.ActiveLoadout.OffensivePrayers - GameState.GetPlayerActivePrayers) <> TRSPrayerSet([])then
-    Exit(True);
+  case GameState.GetTormentedDemonCombatStyle of
+    ERSCombatStyle.MELEE: requiredPrayers += ERSPrayer.PROTECT_FROM_MELEE;
+    ERSCombatStyle.RANGED: requiredPrayers += ERSPrayer.PROTECT_FROM_MISSILES;
+    ERSCombatStyle.MAGIC: requiredPrayers += ERSPrayer.PROTECT_FROM_MAGIC;
+    ERSCombatStyle.UNKNOWN:
+      if [ERSPrayer.PROTECT_FROM_MAGIC, ERSPrayer.PROTECT_FROM_MISSILES] * activePrayers = TRSPrayerSet([]) then
+        Exit(True);
+  end;
+
+  requiredPrayers += Self.ActiveLoadout.OffensivePrayers;
+  Result := (requiredPrayers - GameState.GetPlayerActivePrayers) <> TRSPrayerSet([]);
+
+  writeln('Required prayers: ', ToStr(requiredPrayers));
+  writeln('Active prayers: ', ToStr(activePrayers));
+  writeln('Missing prayers: ', ToStr(requiredPrayers - activePrayers));
 end;
 
 function TTDCombat.ShouldChangeGear(): Boolean;
@@ -137,10 +150,11 @@ begin
 end;
 
 function TTDCombat.GetActions(): TTDCombatActionSet; begin
-  if Self.ShouldHeal          then Result.Add([ETDCombatAction.Heal,           ETDCombatAction.ATTACK]);
+  if Self.ShouldHeal          then Result.Add([ETDCombatAction.HEAL,           ETDCombatAction.ATTACK]);
   if Self.ShouldBoost         then Result.Add([ETDCombatAction.CONSUME_BOOST,  ETDCombatAction.ATTACK]);
   if Self.ShouldRestorePrayer then Result.Add([ETDCombatAction.RESTORE_PRAYER, ETDCombatAction.ATTACK]);
   if Self.ShouldChangePrayer  then Result.Add([ETDCombatAction.SWAP_PRAYER]);
+  if not Self.IsAttacking     then Result += ETDCombatAction.ATTACK;
 
   if Self.ShouldChangeGear then
     Result.Add([ETDCombatAction.OPEN_INVENTORY, ETDCombatAction.SWAP_GEAR, ETDCombatAction.ATTACK]);
@@ -199,7 +213,7 @@ begin
 
   tdPosition := GameState.GetTormentedDemonPosition;
   Self.DebugLn('Waiting for tormented demon movement to detect combat style. Current position: ' + ToStr(tdPosition));
-  Sleep(600);  //static wait??
+  Sleep(1200);  //static wait??
 
   Self.DebugLn('tormented demon after wait: Position: ' + ToStr(GameState.GetTormentedDemonPosition) + '| Distance: %f', [GameState.GetTormentedDemonPosition.DistanceTo(GameState.GetPlayerPosition)]);
 
@@ -211,7 +225,7 @@ begin
   end else
   begin
     Self.DebugLn('Combat style unkown');
-    GameState.SetTormentedDemonCombatStyle(ERSCombatStyle.RANGED); //TODO random?
+    GameState.SetTormentedDemonCombatStyle(ERSCombatStyle.UNKNOWN);
   end;
 end;
 
@@ -313,7 +327,9 @@ begin
     end;
   end;
 
-  walkTimer.Start(Random(580, 610) * Ceil(destination.DistanceTo(Minimap.Center)/8-1));
+  Self.IsAttacking := False;
+
+  walkTimer.Start(Random(610, 700) * Ceil(destination.DistanceTo(Minimap.Center)/8));
   Self.DebugLn('Walk timer started for %d ms', [walkTimer.Remaining]);
 
   Sleep(Min(Random(200, 1000), walkTimer.Remaining));
@@ -324,15 +340,36 @@ end;
 
 procedure TTDCombat.Action_SwapPrayer();
 var
-  requiredPrayers: TRSPrayerSet;
+  activePrayers, requiredPrayers: TRSPrayerSet;
 begin
-  if GameState.GetTormentedDemonCombatStyle <> ERSCombatStyle.NONE then
-    requiredPrayers += ERSPrayer(Ord(GameState.GetTormentedDemonCombatStyle));
+  activePrayers := GameState.GetPlayerActivePrayers;
 
-  if Self.IsAttacking then
-    requiredPrayers += Self.ActiveLoadout.OffensivePrayers;
+  case GameState.GetTormentedDemonCombatStyle of
+    ERSCombatStyle.MELEE:  requiredPrayers += ERSPrayer.PROTECT_FROM_MELEE;
+    ERSCombatStyle.RANGED: requiredPrayers += ERSPrayer.PROTECT_FROM_MISSILES;
+    ERSCombatStyle.MAGIC:  requiredPrayers += ERSPrayer.PROTECT_FROM_MAGIC;
+    ERSCombatStyle.UNKNOWN:
+      if ERSPrayer.PROTECT_FROM_MAGIC in activePrayers then
+        requiredPrayers += ERSPrayer.PROTECT_FROM_MAGIC
+      else if ERSPrayer.PROTECT_FROM_MISSILES in activePrayers then
+        requiredPrayers += ERSPrayer.PROTECT_FROM_MISSILES
+      else if Random(2) = 0 then
+        requiredPrayers += ERSPrayer.PROTECT_FROM_MAGIC
+      else
+        requiredPrayers += ERSPrayer.PROTECT_FROM_MISSILES;
+  end;
 
-  Prayer.Activate(requiredPrayers);
+  requiredPrayers += Self.ActiveLoadout.OffensivePrayers;
+
+  Self.DebugLn('Currently active prayers: %s', [ToStr(activePrayers)]);
+  Self.DebugLn('Required prayers to activate: %s', [ToStr(requiredPrayers)]);
+  Self.DebugLn('Missing prayers to activate: %s', [ToStr(requiredPrayers - activePrayers)]);
+
+  if Prayer.Activate(requiredPrayers - activePrayers) then
+  begin
+    Self.DebugLn('All prayers successfully activated');
+    GameState.SetPlayerActivePrayers(requiredPrayers);
+  end;
 end;
 
 procedure TTDCombat.Action_Heal();
@@ -367,24 +404,40 @@ var
   slot: Integer;
 begin
   gearToEquip := Self.InactiveLoadout.Gear;
+  Self.DebugLn('Swapping gear. Target loadout index: %d', [Self.ActiveLoadoutIndex xor 1]);
+  Self.DebugLn('Gear to equip: %s', [ToStr(gearToEquip)]);
 
-  if not Inventory.Open then
+  if not Inventory.IsOpen then
+  begin
+    Self.DebugLn('Canceling gear swap as inventory is closed.');
     Exit;
+  end;
 
+  Self.DebugLn('Searching inventory for gear');
   for item in gearToEquip do
-    slots += GameState.GetInventoryItems.IndexOf(item);
+  begin
+    slot := GameState.GetInventoryItems.IndexOf(item);
+    if slot < 0 then
+      Continue;
+    slots += slot;
+    Self.DebugLn('Item: %s | Found at slot: %d', [ToStr(item), slot]);
+  end;
 
   for slot in slots do
   begin
     if slot < 0 then
       Continue;
 
+    Self.DebugLn('Clicking slot: %d to equip item.', [slot]);
     Inventory.Slots.Click(slot, EMouseButton.LEFT);
     Sleep(100, 300, ERandomDir.MEAN);
   end;
 
   Self.ActiveLoadoutIndex := Self.ActiveLoadoutIndex xor 1;
+  Self.DebugLn('Gear swapped. New active loadout index: %d', [Self.ActiveLoadoutIndex]);
+  Self.IsAttacking := False;
 end;
+
 
 procedure TTDCombat.Action_DodgeSnare();
 begin

@@ -1,0 +1,15 @@
+{$INCLUDE_ONCE WaspLib/osrs.simba}
+
+type
+  TRSDiscoveredInventory = array of TRSItemArray;
+
+function TRSDiscoveredInventory.IndexOf(item: TRSItem): Integer;
+var
+  i: Int32;
+begin
+  Result := -1;
+  for i := 0 to High(Self) do
+    if Self[i].Contains(item.ToLower) then
+      Exit(i);
+end;
+
