@@ -5,6 +5,8 @@
 var
   i : Integer;
   img: TImage;
+
+procedure ProjectileTest();
 begin
   img := TImage.Create('mage_projectile_0.png');
   Target.SetImage(img);
@@ -25,7 +27,24 @@ begin
     img := TImage.Create(Format('mage_projectile_%d.png', [i]));
     Target.SetImage(img);
     Sleep(3000);
-    GameState.FindTormentedDemonProjectiles;
+    GameState.TrackTormentedDemonProjectiles;
     Sleep(5000);
   end;
+end;
+
+procedure CombatTest();
+begin
+  OverheadFinder.Setup;
+  Map.Setup(Chunk([63,69,64,68], 0)); //TD lair
+  GameState.Start;
+  TDCombat.Init([MeleeTestLoadout, RangedTestLoadout]);
+  Inventory.Open;
+  Sleep(5000);
+  TDCombat.Fight;
+end;
+
+begin
+  CombatTest;
 end.
+
+

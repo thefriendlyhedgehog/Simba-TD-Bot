@@ -130,10 +130,6 @@ begin
 
   requiredPrayers += Self.ActiveLoadout.OffensivePrayers;
   Result := (requiredPrayers - GameState.GetPlayerActivePrayers) <> TRSPrayerSet([]);
-
-  writeln('Required prayers: ', ToStr(requiredPrayers));
-  writeln('Active prayers: ', ToStr(activePrayers));
-  writeln('Missing prayers: ', ToStr(requiredPrayers - activePrayers));
 end;
 
 function TTDCombat.ShouldChangeGear(): Boolean;
@@ -150,10 +146,10 @@ begin
 end;
 
 function TTDCombat.GetActions(): TTDCombatActionSet; begin
-  if Self.ShouldHeal          then Result.Add([ETDCombatAction.HEAL,           ETDCombatAction.ATTACK]);
-  if Self.ShouldBoost         then Result.Add([ETDCombatAction.CONSUME_BOOST,  ETDCombatAction.ATTACK]);
-  if Self.ShouldRestorePrayer then Result.Add([ETDCombatAction.RESTORE_PRAYER, ETDCombatAction.ATTACK]);
-  if Self.ShouldChangePrayer  then Result.Add([ETDCombatAction.SWAP_PRAYER]);
+  if Self.ShouldHeal          then Result += [ETDCombatAction.OPEN_INVENTORY, ETDCombatAction.HEAL,           ETDCombatACtion.ATTACK];
+  if Self.ShouldBoost         then Result += [ETDCombatAction.OPEN_INVENTORY, ETDCombatAction.CONSUME_BOOST,  ETDCombatACtion.ATTACK];
+  if Self.ShouldRestorePrayer then Result += [ETDCombatAction.OPEN_INVENTORY, ETDCombatAction.RESTORE_PRAYER, ETDCombatACtion.ATTACK];
+  if Self.ShouldChangePrayer  then Result += [ETDCombatACtion.OPEN_PRAYER,    ETDCombatAction.SWAP_PRAYER];
   if not Self.IsAttacking     then Result += ETDCombatAction.ATTACK;
 
   if Self.ShouldChangeGear then
@@ -174,6 +170,9 @@ var
   hitsplatTimer: TCountdown;
   hitsplats: TRSHitSplatArray;
 begin
+  if Self.ShouldChangeGear then
+    Self.DoAction(ETDCombatAction.SWAP_GEAR);
+
   Self.DoAction(ETDCombatAction.ATTACK);
 
   //Confirm the results of ATTACK action
@@ -365,7 +364,7 @@ begin
   Self.DebugLn('Required prayers to activate: %s', [ToStr(requiredPrayers)]);
   Self.DebugLn('Missing prayers to activate: %s', [ToStr(requiredPrayers - activePrayers)]);
 
-  if Prayer.Activate(requiredPrayers - activePrayers) then
+  if Prayer.Open and Prayer.Activate(requiredPrayers - activePrayers) then
   begin
     Self.DebugLn('All prayers successfully activated');
     GameState.SetPlayerActivePrayers(requiredPrayers);

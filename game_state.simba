@@ -6,13 +6,20 @@
 {$INCLUDE_ONCE inventory.simba}
 
 const
-  MAX_PROJECTILE_SAMPLES = 20;
-  MAX_PROJECTILE_SAMPLE_EXPIRE_MS = 2000;
+  HITSPLAT_BUFFER_SIZE = 50;
+  HITSPLAT_EXPIRE_MS = 1000;
+  PROJECTILE_BUFFER_SIZE = 20;
+  PROJECTILE_SAMPLE_EXPIRE_MS = 2000;
 
 type
+  THitSplatSample = record
+    HitSplat: TRSHitSplat;
+    TimeStamp: UInt64;
+  end;
+
   TProjectileSample = record
     Style: ERSCombatStyle;
-    Timestamp: UInt64;
+    TimeStamp: UInt64;
   end;
 
   TTDBotGameState = record
@@ -22,6 +29,10 @@ type
     pPosition: TPoint;
     pActivePrayers: TRSPrayerSet;
     pInventoryItems: TRSDiscoveredInventory;
+    pHitSplatBuffer: array[0..HITSPLAT_BUFFER_SIZE - 1] of THitSplatSample;
+    pHitSplatBufferIndex: Integer;
+    pDivineDoses: Integer;
+    pLastDivineConsume: Integer;
 
     tdLock: TLock;
     tdProtectedStyle: ERSCombatStyle;
@@ -30,8 +41,8 @@ type
     tdPosition: TPoint;
     tdHealth: Integer;
     tdIsCastingSnare: Boolean;
-    tdProjSampleBuffer: array[1..MAX_PROJECTILE_SAMPLES] of TProjectileSample;
-    tdProjSampleBufferIndex: Integer;
+    tdProjectileBuffer: array[0..PROJECTILE_BUFFER_SIZE - 1] of TProjectileSample;
+    tdProjectileBufferIndex: Integer;
   end;
 
 procedure TTDBotGameState.SetPlayerPosition(position: TPoint);
@@ -94,9 +105,9 @@ procedure TTDBotGameState.ReadPrayerTab();
 var
   b: TBox;
 begin
-  //triple ensure that the prayer tab is open to prevent false results.
-  if Prayer.IsOpen and Prayer.Find(ERSPrayer.THICK_SKIN, b) and Prayer.Find(ERSPrayer.PROTECT_FROM_MELEE, b) then
-    Self.SetPlayerActivePrayers(Prayer.GetActivePrayers);
+  ////triple ensure that the prayer tab is open to prevent false results.
+  //if Prayer.IsOpen and Prayer.Find(ERSPrayer.THICK_SKIN, b) and Prayer.Find(ERSPrayer.PROTECT_FROM_MELEE, b) then
+  //  Self.SetPlayerActivePrayers(Prayer.GetActivePrayers);
 end;
 
 procedure TTDBotGameState.ReadGameTabs();
@@ -108,6 +119,84 @@ begin
   Sleep(50);
 end;
 
+function TTDBotGameState.GetPlayerHitsplatBuffer(): array of THitsplatSample;
+begin
+  Self.pLock.Enter;
+  Result := Self.pHitSplatBuffer.Copy;
+  Self.pLock.Leave;
+end;
+
+procedure TTDBotGameState.TrackPlayerHitsplats();
+  function CountDivineDoses(): Integer;
+  begin
+
+  end;
+
+  function IsDuplicate(sample: THitsplatSample): Boolean;
+  var
+    i: Int32;
+  begin
+    for i := 0 to High(Self.pHitsplatBuffer) do
+      with Self.pHitsplatBuffer[i] do
+        if (Hitsplat.Value <> 0) and (Hitsplat.Value = sample.HitSplat.Value) and ((sample.Timestamp - Timestamp) < 50) then
+          Exit(True);
+
+    if (sample.HitSplat.Value = 10) and ((sample.Timestamp - Self.pLastDivineConsume) < HITSPLAT_EXPIRE_MS) then
+      Exit(True);
+
+    Result := False;
+  end;
+var
+  currentTime: UInt64;
+  divineDoses: Integer;
+  consumedDivine: Boolean;
+  hitsplat: TRSHitsplat;
+  hitsplats: TRSHitsplatArray;
+  earliestDivineTime: UInt64;
+  i: Int32;
+begin
+
+  ///TODO LOCKS?????????
+  currentTime := GetTimeRunning();
+  divineDoses := CountDivineDoses;
+  consumedDivine := (Self.pDivineDoses - divineDoses) = 1;
+
+  if consumedDivine then
+  begin
+    Self.pDivineDoses := divineDoses;
+
+    for i := Low(Self.pHitsplatBuffer) to High(Self.pHitsplatBuffer) do
+      with Self.pHitsplatBuffer[i] do
+        if (Hitsplat.Value = 10) and ((currentTime - Timestamp) < HITSPLAT_EXPIRE_MS) then
+          if (earliestDivineTime = 0) or (Timestamp < earliestDivineTime) then
+            earliestDivineTime := Timestamp;
+
+    if earliestDivineTime > 0 then
+    begin
+      Self.pLastDivineConsume := earliestDivineTime;
+      for i := Low(Self.pHitsplatBuffer) to High(Self.pHitsplatBuffer) do
+        with Self.pHitsplatBuffer[i] do
+          if (Hitsplat.Value = 10) and (Timestamp >= earliestDivineTime) and ((currentTime - Timestamp) < HITSPLAT_EXPIRE_MS) then
+            Self.pHitSplatBuffer[i] := [];
+    end;
+  end;
+
+  if not TRSHitsplat.Find(hitsplats, [MainScreen.GetPlayerBox]) then
+    Exit;
+
+
+  //TODO im here
+  for hitsplat in hitsplats do
+  begin
+    if IsDuplicate([hitsplat, currentTime]) then
+      Continue;
+
+    Self.pHitsplatBuffer[Self.pHitSplatBufferIndex] := [hitsplat, currentTime];
+    Inc(Self.pHitSplatBufferIndex);
+    if Self.pHitSplatBufferIndex >= Length(Self.pHitsplatBuffer) then
+      Self.pHitSplatBufferIndex := Low(Self.pHitSplatBuffer);
+  end;
+end;
 
 function TTDBotGameState.IsPlayerSnared(): Boolean;
 begin
@@ -293,15 +382,15 @@ end;
 procedure TTDBotGameState.AddProjectileSample(detectedStyle: ERSCombatStyle);
 begin
   Self.tdLock.Enter;
-  with Self.tdProjSampleBuffer[Self.tdProjSampleBufferIndex] do
+  with Self.tdProjectileBuffer[Self.tdProjectileBufferIndex] do
   begin
     Style := detectedStyle;
     TimeStamp := Time;
   end;
 
-  Inc(Self.tdProjSampleBufferIndex);
-  if Self.tdProjSampleBufferIndex > High(Self.tdProjSampleBuffer) then
-    Self.tdProjSampleBufferIndex := Low(Self.tdProjSampleBuffer);
+  Inc(Self.tdProjectileBufferIndex);
+  if Self.tdProjectileBufferIndex > High(Self.tdProjectileBuffer) then
+    Self.tdProjectileBufferIndex := Low(Self.tdProjectileBuffer);
 
   Self.tdLock.Leave;
 end;
@@ -315,9 +404,9 @@ var
 begin
   currentTime := GetTimeRunning;
   Self.tdLock.Enter;
-  for sample in Self.tdProjSampleBuffer do
+  for sample in Self.tdProjectileBuffer do
   begin
-    if (currentTime - sample.Timestamp) > MAX_PROJECTILE_SAMPLE_EXPIRE_MS then
+    if (currentTime - sample.Timestamp) > PROJECTILE_SAMPLE_EXPIRE_MS then
       Continue;
     Inc(counts[sample.Style]);
     Inc(total);
@@ -371,18 +460,41 @@ end;
 
 function TTDBotGameState.FindRangedProjectile(searchArea: TBox): Boolean;
 begin
-
+  //TODO this is boring
 end;
 
-procedure TTDBotGameState.FindTormentedDemonProjectiles();
+procedure TTDBotGameState.TrackTormentedDemonCombatStyle();
 var
   searchArea: TBox;
+  detectedStyle: ERSCombatStyle;
+  hitsplats: array of THitSplatSample;
+  i: Integer;
+
 begin
   searchArea := MainScreen.GetPlayerBox.Combine(Self.GetTormentedDemonMSPoints.Bounds);
   if Self.FindMagicProjectile(searchArea) then
     Self.AddProjectileSample(ERSCombatStyle.MAGIC);
   if Self.FindRangedProjectile(searchArea) then
     Self.AddProjectileSample(ERSCombatStyle.RANGED);
+
+  if Self.GetTormentedDemonCombatStyle = ERSCombatStyle.UNKNOWN then
+    if Self.GetProjectileStyleConfidence(detectedStyle) > 0.7 then
+      Self.SetTormentedDemonCombatStyle(detectedStyle);
+
+  //TODO melee distance, following tracking
+
+  if Self.GetTormentedDemonCombatStyle <> ERSCombatStyle.UNKNOWN then
+  begin
+    hitsplats := Self.GetPlayerHitsplatBuffer();
+    for i := 0 to High(hitsplats) do
+    begin
+      if (hitsplats[i].HitSplat.Color = ERSHitSplat.RED) and InRange(GetTimeRunning - hitsplats[i].TimeStamp, 200, HITSPLAT_EXPIRE_MS) then
+      begin
+        //TODO analyze current style, demon distance, change styles because we're taking damage!
+      end;
+    end;
+  end;
+
 end;
 
 procedure TTDBotGameState.Start();
@@ -395,7 +507,8 @@ begin
   Self.TaskManager.Schedule(@Self.ReadGameTabs);
   Self.TaskManager.Schedule(@Self.FindTormentedDemon);
   Self.TaskManager.Schedule(@Self.FindTormentedDemonSnare);
-  Self.TaskManager.Schedule(@Self.FindTormentedDemonProjectiles);
+  Self.TaskManager.Schedule(@Self.TrackTormentedDemonCombatStyle);
+  Self.TaskManager.Schedule(@Self.TrackPlayerHitsplats);
 
   WriteLn('ReadPlayerPosition: ', ToStr(@Self.ReadPlayerPosition));
   Writeln('FindTormentedDemon: ', ToStr(@Self.FindTormentedDemon));
