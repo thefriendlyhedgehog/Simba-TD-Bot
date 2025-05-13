@@ -22,6 +22,8 @@ type
     TimeStamp: UInt64;
   end;
 
+  //TODO move all task and task-helper functions into their own observer record.
+  //Leave only get functions in this record
   TTDBotGameState = record
     TaskManager: TReschedulingTaskManager;
 
@@ -128,8 +130,18 @@ end;
 
 procedure TTDBotGameState.TrackPlayerHitsplats();
   function CountDivineDoses(): Integer;
+  var
+    item: String;
+    items: TStringArray;
   begin
-
+    for items in Self.GetInventoryItems do
+      for item in items do
+      begin
+        if Pos('Divine', item) <= 0 then
+          Continue;
+        Inc(Result, item.ExtractInteger(0));
+        Break;
+      end;
   end;
 
   function IsDuplicate(sample: THitsplatSample): Boolean;
@@ -464,37 +476,95 @@ begin
 end;
 
 procedure TTDBotGameState.TrackTormentedDemonCombatStyle();
+const
+  MELEE_DISTANCE_THRESHOLD = 8;
+  PROJECTILE_CONFIDENCE_HI = 0.7;
+  PROJECTILE_CONFIDENCE_LO = 0.5;
 var
   searchArea: TBox;
-  detectedStyle: ERSCombatStyle;
+  projectileStyleConfidence: Single;
+  detectedProjectileStyle: ERSCombatStyle;
   hitsplats: array of THitSplatSample;
   i: Integer;
-
+  activeProtection: ERSPrayer;
 begin
+  //search and log any projectile found
   searchArea := MainScreen.GetPlayerBox.Combine(Self.GetTormentedDemonMSPoints.Bounds);
   if Self.FindMagicProjectile(searchArea) then
     Self.AddProjectileSample(ERSCombatStyle.MAGIC);
   if Self.FindRangedProjectile(searchArea) then
     Self.AddProjectileSample(ERSCombatStyle.RANGED);
 
+  projectileStyleConfidence := Self.GetProjectileStyleConfidence(detectedProjectileStyle);
+
+  //if combat style is unknown and we're confident in a projectile type then set style
   if Self.GetTormentedDemonCombatStyle = ERSCombatStyle.UNKNOWN then
-    if Self.GetProjectileStyleConfidence(detectedStyle) > 0.7 then
-      Self.SetTormentedDemonCombatStyle(detectedStyle);
+    if projectileStyleConfidence > PROJECTILE_CONFIDENCE_HI then
+      Self.SetTormentedDemonCombatStyle(detectedProjectileStyle);
 
   //TODO melee distance, following tracking
 
-  if Self.GetTormentedDemonCombatStyle <> ERSCombatStyle.UNKNOWN then
-  begin
-    hitsplats := Self.GetPlayerHitsplatBuffer();
-    for i := 0 to High(hitsplats) do
-    begin
-      if (hitsplats[i].HitSplat.Color = ERSHitSplat.RED) and InRange(GetTimeRunning - hitsplats[i].TimeStamp, 200, HITSPLAT_EXPIRE_MS) then
-      begin
-        //TODO analyze current style, demon distance, change styles because we're taking damage!
-      end;
-    end;
+  //Check if we're taking damage, exit if not
+  hitsplats := Self.GetPlayerHitsplatBuffer();
+  for i := 0 to High(hitsplats) do
+    if (hitsplats[i].HitSplat.Color = ERSHitSplat.RED) and InRange(GetTimeRunning - hitsplats[i].TimeStamp, 200, HITSPLAT_EXPIRE_MS) then
+      Break
+    else if i = High(hitsplats) then
+      Exit;
+
+  //find active protection prayer, ERSPrayer(-1) if none
+  for activeProtection in [ERSPrayer.PROTECT_FROM_MELEE, ERSPrayer.PROTECT_FROM_MISSILES, ERSPrayer.PROTECT_FROM_MAGIC, ERSPrayer(-1)] do
+    if activeProtection in Self.GetPlayerActivePrayers then
+      Break;
+
+  //if the correct prayer isnt active then exit, we're waiting for combat to turn the prayer on.
+  case Self.GetTormentedDemonCombatStyle of
+    ERSCombatStyle.MELEE  :  if activeProtection <> ERSPrayer.PROTECT_FROM_MELEE    then Exit;
+    ERSCombatStyle.RANGED :  if activeProtection <> ERSPrayer.PROTECT_FROM_MISSILES then Exit;
+    ERSCombatStyle.MAGIC  :  if activeProtection <> ERSPrayer.PROTECT_FROM_MAGIC    then Exit;
   end;
 
+  //Check if we're confident in a projectile type and that style is not our current set style
+  if (projectileStyleConfidence > PROJECTILE_CONFIDENCE_HI) and (detectedProjectileStyle <> Self.GetTormentedDemonCombatStyle) then
+  begin
+    Self.SetTormentedDemonCombatStyle(detectedProjectileStyle);
+    Exit;
+  end;
+
+  //Check if tormented demon is out of melee damage
+  if Self.GetTormentedDemonPosition.DistanceTo(Self.GetPlayerPosition) >= MELEE_DISTANCE_THRESHOLD then
+  begin
+    //use the opposite at range combat style if we're not confident in a projectile, or choose at random if we have melee or no prayer active
+    case activeProtection of
+      ERSPrayer.PROTECT_FROM_MISSILES:  Self.SetTormentedDemonCombatStyle(ERSCombatStyle.MAGIC);
+      ERSPrayer.PROTECT_FROM_MAGIC:     Self.SetTormentedDemonCombatStyle(ERSCombatStyle.RANGED);
+      else
+        if Random(2) then
+          Self.SetTormentedDemonCombatStyle(ERSCombatStyle.MAGIC)
+        else
+          Self.SetTormentedDemonCombatStyle(ERSCombatStyle.RANGED);
+    end;
+  end else
+  begin
+    //if active protection is magic, or ranged, then set to melee, if melee
+    if activeProtection in [ERSPrayer.PROTECT_FROM_MISSILES, ERSPrayer.PROTECT_FROM_MAGIC] then
+    begin
+      Self.SetTormentedDemonCombatStyle(ERSCombatStyle.MELEE);
+      Exit;
+    end;
+
+    //Check for a lower confidence than we're normally looking for before choosing at random.
+    if projectileStyleConfidence > PROJECTILE_CONFIDENCE_LO then
+    begin
+      Self.SetTormentedDemonCombatStyle(detectedProjectileStyle);
+      Exit;
+    end;
+
+    if Random(2) then
+      Self.SetTormentedDemonCombatStyle(ERSCombatStyle.MAGIC)
+    else
+      Self.SetTormentedDemonCombatStyle(ERSCombatStyle.RANGED);
+  end;
 end;
 
 procedure TTDBotGameState.Start();

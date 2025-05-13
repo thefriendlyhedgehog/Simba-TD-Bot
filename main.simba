@@ -27,7 +27,7 @@ begin
     img := TImage.Create(Format('mage_projectile_%d.png', [i]));
     Target.SetImage(img);
     Sleep(3000);
-    GameState.TrackTormentedDemonProjectiles;
+    GameState.TrackTormentedDemonCombatStyle;
     Sleep(5000);
   end;
 end;
