@@ -220,11 +220,11 @@ begin
     < tdPosition.DistanceTo(GameState.GetPlayerPosition) then
   begin
     Self.DebugLn('Detected melee combat style');
-    GameState.SetTormentedDemonCombatStyle(ERSCombatStyle.MELEE);
+    //GameState.SetTormentedDemonCombatStyle(ERSCombatStyle.MELEE);
   end else
   begin
     Self.DebugLn('Combat style unkown');
-    GameState.SetTormentedDemonCombatStyle(ERSCombatStyle.UNKNOWN);
+    //GameState.SetTormentedDemonCombatStyle(ERSCombatStyle.UNKNOWN);
   end;
 end;
 
@@ -367,7 +367,7 @@ begin
   if Prayer.Open and Prayer.Activate(requiredPrayers - activePrayers) then
   begin
     Self.DebugLn('All prayers successfully activated');
-    GameState.SetPlayerActivePrayers(requiredPrayers);
+    //GameState.SetPlayerActivePrayers(requiredPrayers);
   end;
 end;
 

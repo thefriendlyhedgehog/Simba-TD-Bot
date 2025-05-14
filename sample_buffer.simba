@@ -1,0 +1,113 @@
+type
+  TSample = record
+    Time: UInt64;
+    Data: Pointer;
+  end;
+
+  TSampleArray = array of TSample;
+
+procedure TSampleArray.Free();
+var
+  i: Integer;
+begin
+  for i := Self.Low to Self.High do
+  begin
+    FreeMem(Self[i].Data);
+    Self[i] := [];
+  end;
+end;
+
+type
+  TSampleBuffer = record
+    Data: array of TSample;
+    Index: Integer;
+    SampleDataSize: Integer;
+  end;
+
+procedure TSampleBuffer.Init(capacity, sampleDataSize: Integer);
+begin
+  SetLength(Self.Data, capacity);
+  Self.SampleDataSize := sampleDataSize;
+  Self.Index := 0;
+end;
+
+procedure TSampleBuffer.Add(p: Pointer);
+begin
+  if Self.Data[Self.Index].Data <> nil then
+    FreeMem(Self.Data[Self.Index].Data);
+
+  Self.Data[Self.Index].Time := GetTimeRunning;
+  Self.Data[Self.Index].Data := AllocMem(Self.SampleDataSize);
+  Move(p^, Self.Data[Self.Index].Data^, Self.SampleDataSize);
+
+  Inc(Self.Index);
+  if Self.Index > High(Self.Data) then
+    Self.Index := 0;
+end;
+
+procedure TSampleBuffer.FreeExpired(olderThan: UInt64);
+var
+  i: Integer;
+  now: UInt64;
+begin
+  now := GetTimeRunning;
+  for i := 0 to High(Self.Data) do
+    if (Self.Data[i].Data <> nil) and (now - Self.Data[i].Time > olderThan) then
+    begin
+      FreeMem(Self.Data[i].Data);
+      Self.Data[i].Data := nil;
+      Self.Data[i] := [];
+    end;
+end;
+
+procedure TSampleBuffer.Free();
+var
+  i: Integer;
+begin
+  for i := 0 to High(Self.Data) do
+    if Self.Data[i].Data <> nil then
+    begin
+      FreeMem(Self.Data[i].Data);
+      Self.Data[i] := [];
+    end;
+
+  SetLength(Self.Data, 0);
+  Self.Index := 0;
+end;
+
+function TSampleBuffer.GetSample(index: Integer): TSample;
+begin
+  Result := Self.Data[index];
+end;
+
+function TSampleBuffer.GetSamples(ageMin, ageMax: Integer; oldestFirst: Boolean = True): TSampleArray;
+var
+  i, count, index, capacity: Integer;
+  currentTime: UInt64;
+begin
+  capacity := Length(Self.Data);
+  SetLength(Result, capacity);
+  currentTime := GetTimeRunning();
+
+  for i := 0 to capacity - 1 do
+  begin
+    if oldestFirst then
+      index := (Self.Index + i) mod capacity  // walk forward from oldest
+    else
+      index := (Self.Index - 1 - i + capacity) mod capacity; // walk backward from newest
+
+    if Self.Data[index].Data = nil then
+      Continue;
+
+    if InRange(currentTime - Self.Data[index].Time, ageMin, ageMax) then
+    begin
+      Result[count].Time := Self.Data[index].Time;
+      Result[count].Data := GetMem(Self.SampleDataSize);
+      Move(Self.Data[index].Data^, Result[count].Data^, Self.SampleDataSize);
+      Inc(count);
+    end;
+  end;
+
+  SetLength(Result, count);
+end;
+

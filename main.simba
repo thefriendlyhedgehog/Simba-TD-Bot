@@ -17,7 +17,7 @@ begin
 
   OverheadFinder.Setup;
   Map.Setup(Chunk([63,69,64,68], 0)); //TD lair
-  GameState.Start;
+  GameState.Observer.Start;
   TDCombat.Init([MeleeTestLoadout, RangedTestLoadout]);
   Sleep(5000);
 
@@ -27,7 +27,7 @@ begin
     img := TImage.Create(Format('mage_projectile_%d.png', [i]));
     Target.SetImage(img);
     Sleep(3000);
-    GameState.TrackTormentedDemonCombatStyle;
+    GameState.Observer.TrackTormentedDemonCombatStyle;
     Sleep(5000);
   end;
 end;
@@ -36,7 +36,7 @@ procedure CombatTest();
 begin
   OverheadFinder.Setup;
   Map.Setup(Chunk([63,69,64,68], 0)); //TD lair
-  GameState.Start;
+  GameState.Observer.Start;
   TDCombat.Init([MeleeTestLoadout, RangedTestLoadout]);
   Inventory.Open;
   Sleep(5000);
