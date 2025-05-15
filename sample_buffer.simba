@@ -80,7 +80,7 @@ begin
   Result := Self.Data[index];
 end;
 
-function TSampleBuffer.GetSamples(ageMin, ageMax: Integer; oldestFirst: Boolean = True): TSampleArray;
+function TSampleBuffer.GetSamples(ageMin, ageMax: Integer): TSampleArray;
 var
   i, count, index, capacity: Integer;
   currentTime: UInt64;
@@ -91,10 +91,7 @@ begin
 
   for i := 0 to capacity - 1 do
   begin
-    if oldestFirst then
-      index := (Self.Index + i) mod capacity  // walk forward from oldest
-    else
-      index := (Self.Index - 1 - i + capacity) mod capacity; // walk backward from newest
+    index := (Self.Index - 1 - i + capacity) mod capacity; // walk backward from newest
 
     if Self.Data[index].Data = nil then
       Continue;

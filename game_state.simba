@@ -20,6 +20,7 @@ type
     pLock: TLock;
     pPosition: TPoint;
     pPositionBuffer: TSampleBuffer;
+    pTimeDetectedSteppingAway: UInt64;
     pActivePrayers: TRSPrayerSet;
     pInventoryItems: TRSDiscoveredInventory;
     pHitsplatBuffer: TSampleBuffer;
@@ -71,16 +72,19 @@ end;
 
 procedure TGameStateObserver.ReadInventoryTab();
 begin
-  if ChooseOption.IsOpen and ChooseOption.Bounds.Intersects(GameTab.Bounds) then
+  if (not Inventory.IsOpen) or (ChooseOption.IsOpen and ChooseOption.Bounds.Intersects(GameTab.Bounds)) then
     Exit;
 
-  // TODO Self.SetInventoryItems(Inventory.Items.DiscoverAllEx);
+  Self.pLock.Enter;
+  Self.pInventoryItems := Inventory.Items.DiscoverAllEx;
+  Self.pLock.Leave;
 end;
 
 procedure TGameStateObserver.ReadPrayerTab();
 var
   b: TBox;
 begin
+  //TODO HOW DO WE TRACK PRAYERS WITH VISUALS ONLY??
   ////triple ensure that the prayer tab is open to prevent false results.
   //if Prayer.IsOpen and Prayer.Find(ERSPrayer.THICK_SKIN, b) and Prayer.Find(ERSPrayer.PROTECT_FROM_MELEE, b) then
   //  Self.SetPlayerActivePrayers(Prayer.GetActivePrayers);
@@ -92,7 +96,6 @@ begin
     ERSGameTab.INVENTORY: Self.ReadInventoryTab;
     ERSGameTab.PRAYER: Self.ReadPrayerTab;
   end;
-  Sleep(50);
 end;
 
 procedure TGameStateObserver.TrackPlayerPosition();
@@ -100,7 +103,6 @@ var
   position: TPoint;
   previous: TSample;
 begin
-  //if RSClient.IsLoggedIn then
   position := Map.Position;
 
   Self.pLock.Enter;
@@ -453,34 +455,67 @@ begin
   //TODO this is boring
 end;
 
+type EMovementBias = enum(AWAY, TOWARD);
+
+function TGameStateObserver.CalcDirectionalMovementScore(samples: TSampleArray; reference: TPoint; bias: EMovementBias): Single;
+var
+  currentTime: UInt64;
+  previousPosition, currentPosition: TPoint;
+  direction: TVector2;
+  currentProjection, previousProjection: Single;
+  i, score: Integer;
+  biasMatch: Boolean;
+begin
+  //if we don't have anything to compare against, then we can't create a score
+  if samples.Length < 2 then
+    Exit;
+
+  currentTime := GetTimeRunning;
+  direction := TPoint(TPoint(samples.First.Data^) - reference).ToVec2.Normalize;
+
+  for i := samples.High - 1 downto samples.Low do
+  begin
+    currentPosition := TPoint(samples[i].Data^);
+    previousPosition := TPoint(samples[i + 1].Data^);
+    currentProjection := TPoint(currentPosition - reference).ToVec2.Dot(direction);
+    previousProjection := TPoint(previousPosition - reference).ToVec2.Dot(direction);
+
+    case bias of
+      EMovementBias.AWAY: biasMatch := currentProjection > previousProjection;
+      EMovementBias.TOWARD: biasMatch := currentProjection < previousProjection;
+    end;
+
+    if biasMatch then
+    begin
+      Inc(score, 3);
+      if (samples[i].Time - samples[i + 1].Time) <= 90 then
+        Inc(score, 2);
+    end;
+  end;
+
+  Result := score / (samples.Length * 5);
+end;
+
 function TGameStateObserver.IsPlayerSteppingAway(): Boolean;
 const
   MIN_SAMPLE_AMT = 8;
-  MIN_CONFIDENCE = 0.8;
-  TD_POS_AGE_DIFF = 200;
-  POS_CLUSTER_TIME_FRAME = 90;
-
+  MIN_CONFIDENCE = 0.6;
+  POS_AGE_DIFF = 200;
 var
-  playerSamples: TSampleArray;
+  playerSamples, samples: TSampleArray;
+  age: Integer;
   tdPosition: TPoint;
-  i: Integer;
-  currentTime: UInt64;
+begin
+  Self.pLock.Enter;
+  playerSamples :=  Self.pPositionBuffer.GetSamples(0, 1800);
+  Self.pLock.Leave;
+  try
+    if playerSamples.Length < MIN_SAMPLE_AMT then
+      Exit;
 
-  procedure GetPlayerSamples();
-  begin
-    Self.pLock.Enter;
-    playerSamples :=  Self.pPositionBuffer.GetSamples(0, 1800);
-    Self.pLock.Leave;
-  end;
-
-  procedure GetTDPosition();
-  var
-    age: Integer;
-    samples: TSampleArray;
-  begin
     age := GetTimeRunning - playerSamples.First.Time;
     Self.tdLock.Enter;
-    samples := Self.tdPositionBuffer.GetSamples(age - TD_POS_AGE_DIFF, age + TD_POS_AGE_DIFF, False);
+    samples := Self.tdPositionBuffer.GetSamples(age - POS_AGE_DIFF, age + POS_AGE_DIFF);
     Self.tdLock.Leave;
     try
       if samples.Length = 0 then
@@ -489,47 +524,46 @@ var
     finally
       samples.Free;
     end;
+
+    Result := Self.CalcDirectionalMovementScore(playerSamples, tdPosition, EMovementBias.AWAY) >= MIN_CONFIDENCE;
+  finally
+    playerSamples.Free;
   end;
+end;
 
-  function CalculateProjectionConfidence(): Single;
-  var
-    currentPosition, previousPosition: TPoint;
-    direction: TVector2;
-    previousProjection, currentProjection: Single;
-    stepScore: Integer;
-  begin
-    previousPosition := TPoint(playerSamples.First.Data^);
-    direction := TPoint(previousPosition - tdPosition).toVec2.Normalize;
+function TGameStateObserver.IsTormentedDemonFollowing(): Boolean;
+const
+  MIN_SAMPLE_AMT = 5;
+  MIN_CONFIDENCE = 0.6;
+  POS_AGE_DIFF = 200;
+var
+  tdSamples, samples: TSampleArray;
+  age: Integer;
+  playerPosition: TPoint;
+begin
+  Self.tdLock.Enter;
+  tdSamples :=  Self.tdPositionBuffer.GetSamples(0, 1800);
+  Self.tdLock.Leave;
+  try
+    if tdSamples.Length < MIN_SAMPLE_AMT then
+      Exit;
 
-    for i := playerSamples.Low to playerSamples.High - 1 do
-    begin
-      previousPosition := TPoint(playerSamples[i + 1].Data^);
-      currentPosition := TPoint(playerSamples[i].Data^);
-      previousProjection := TPoint(previousPosition - tdPosition).ToVec2.Dot(Direction);
-      currentProjection := TPoint(currentPosition - tdPosition).ToVec2.Dot(Direction);
-      if currentProjection > previousProjection then
-      begin
-        Inc(stepScore);
-        if (currentTime - playerSamples[i].Time) <= POS_CLUSTER_TIME_FRAME then
-          Inc(stepScore, 3);
-      end;
+    age := GetTimeRunning - tdSamples.First.Time;
+    Self.pLock.Enter;
+    samples := Self.pPositionBuffer.GetSamples(age - POS_AGE_DIFF, age + POS_AGE_DIFF);
+    Self.pLock.Leave;
+    try
+      if samples.Length = 0 then
+        Exit;
+      playerPosition := TPoint(samples.First.Data^);
+    finally
+      samples.Free;
     end;
 
-    Result := stepScore / (playerSamples.Length * 4);
+    Result := Self.CalcDirectionalMovementScore(tdSamples, playerPosition, EMovementBias.TOWARD) >= MIN_CONFIDENCE;
+  finally
+    tdSamples.Free;
   end;
-
-begin
-  currentTime := GetTimeRunning;
-
-  GetPlayerSamples;
-  if playerSamples.Length < MIN_SAMPLE_AMT then
-    Exit;
-
-  GetTDPosition;
-  if tdPosition = [] then
-    Exit;
-
-  Result := CalculateProjectionConfidence >= MIN_CONFIDENCE;
 end;
 
 procedure TGameStateObserver.TrackTormentedDemonCombatStyle();
@@ -539,7 +573,7 @@ const
   PROJECTILE_CONFIDENCE_LO = 0.5;
 var
   searchArea: TBox;
-  foundMagic, foundRanged: Boolean;
+  foundMagic, foundRanged, recentlyDetectedSteppingAway: Boolean;
   projectileStyleConfidence: Single;
   style, detectedProjectileStyle: ERSCombatStyle;
   hitsplats: TSampleArray;
@@ -570,11 +604,28 @@ begin
 
   //if combat style is unknown and we're confident in a projectile type then set style
   if Self.GetTormentedDemonCombatStyle = ERSCombatStyle.UNKNOWN then
+  begin
     if projectileStyleConfidence > PROJECTILE_CONFIDENCE_HI then
+    begin
       Self.SetTormentedDemonCombatStyle(detectedProjectileStyle);
+      Exit;
+    end;
 
-  //TODO melee distance, following tracking
+    recentlyDetectedSteppingAway := (GetTimeRunning - Self.pTimeDetectedSteppingAway) <= 1200;
+    if recentlyDetectedSteppingAway or Self.IsPlayerSteppingAway then
+    begin
+      if not recentlyDetectedSteppingAway then
+        Self.pTimeDetectedSteppingAway := GetTimeRunning;
 
+      if Self.IsTormentedDemonFollowing then
+      begin
+        Self.SetTormentedDemonCombatStyle(ERSCombatStyle.MELEE);
+        Exit;
+      end;
+    end;
+  end;
+
+  //TODO ignore damage previous to the time that prayer was turned on + hitsplat expiry
   //Check if we're taking damage, exit if not
   Self.pLock.Enter;
   hitsplats := Self.pHitsplatBuffer.GetSamples(200, 2000);
@@ -604,7 +655,7 @@ begin
     Exit;
   end;
 
-  //Check if tormented demon is out of melee damage
+  //Check if tormented demon is out of melee range
   if Self.GetTormentedDemonPosition.DistanceTo(Self.GetPlayerPosition) >= MELEE_DISTANCE_THRESHOLD then
   begin
     //use the opposite at range combat style if we're not confident in a projectile, or choose at random if we have melee or no prayer active
@@ -719,9 +770,4 @@ end;
 
 var
   GameState: TGameState;
-
-
-
-
-
 
