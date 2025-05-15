@@ -31,6 +31,7 @@ type
     tdCombatStyle: ERSCombatStyle;
     tdMainScreenPoints: TPointArray;
     tdPosition: TPoint;
+    tdPositionBuffer: TSampleBuffer;
     tdHealth: Integer;
     tdIsCastingSnare: Boolean;
     tdProjectileBuffer: TSampleBuffer;
@@ -97,13 +98,19 @@ end;
 procedure TGameStateObserver.TrackPlayerPosition();
 var
   position: TPoint;
+  previous: TSample;
 begin
   //if RSClient.IsLoggedIn then
   position := Map.Position;
 
   Self.pLock.Enter;
   Self.pPosition := position;
-  Self.pPositionBuffer.Add(@position);
+  with Self.pPositionBuffer do
+  begin
+    previous := Data[(Index - 1 + Data.Length) mod Data.Length];
+    if (previous.Data = nil) or ((previous.Data <> nil) and (TPoint(previous.Data^) <> position)) then
+      Add(@position);
+  end;
   Self.pLock.Leave;
 end;
 
@@ -444,6 +451,85 @@ end;
 function TGameStateObserver.FindRangedProjectile(searchArea: TBox): Boolean;
 begin
   //TODO this is boring
+end;
+
+function TGameStateObserver.IsPlayerSteppingAway(): Boolean;
+const
+  MIN_SAMPLE_AMT = 8;
+  MIN_CONFIDENCE = 0.8;
+  TD_POS_AGE_DIFF = 200;
+  POS_CLUSTER_TIME_FRAME = 90;
+
+var
+  playerSamples: TSampleArray;
+  tdPosition: TPoint;
+  i: Integer;
+  currentTime: UInt64;
+
+  procedure GetPlayerSamples();
+  begin
+    Self.pLock.Enter;
+    playerSamples :=  Self.pPositionBuffer.GetSamples(0, 1800);
+    Self.pLock.Leave;
+  end;
+
+  procedure GetTDPosition();
+  var
+    age: Integer;
+    samples: TSampleArray;
+  begin
+    age := GetTimeRunning - playerSamples.First.Time;
+    Self.tdLock.Enter;
+    samples := Self.tdPositionBuffer.GetSamples(age - TD_POS_AGE_DIFF, age + TD_POS_AGE_DIFF, False);
+    Self.tdLock.Leave;
+    try
+      if samples.Length = 0 then
+        Exit;
+      tdPosition := TPoint(samples.First.Data^);
+    finally
+      samples.Free;
+    end;
+  end;
+
+  function CalculateProjectionConfidence(): Single;
+  var
+    currentPosition, previousPosition: TPoint;
+    direction: TVector2;
+    previousProjection, currentProjection: Single;
+    stepScore: Integer;
+  begin
+    previousPosition := TPoint(playerSamples.First.Data^);
+    direction := TPoint(previousPosition - tdPosition).toVec2.Normalize;
+
+    for i := playerSamples.Low to playerSamples.High - 1 do
+    begin
+      previousPosition := TPoint(playerSamples[i + 1].Data^);
+      currentPosition := TPoint(playerSamples[i].Data^);
+      previousProjection := TPoint(previousPosition - tdPosition).ToVec2.Dot(Direction);
+      currentProjection := TPoint(currentPosition - tdPosition).ToVec2.Dot(Direction);
+      if currentProjection > previousProjection then
+      begin
+        Inc(stepScore);
+        if (currentTime - playerSamples[i].Time) <= POS_CLUSTER_TIME_FRAME then
+          Inc(stepScore, 3);
+      end;
+    end;
+
+    Result := stepScore / (playerSamples.Length * 4);
+  end;
+
+begin
+  currentTime := GetTimeRunning;
+
+  GetPlayerSamples;
+  if playerSamples.Length < MIN_SAMPLE_AMT then
+    Exit;
+
+  GetTDPosition;
+  if tdPosition = [] then
+    Exit;
+
+  Result := CalculateProjectionConfidence >= MIN_CONFIDENCE;
 end;
 
 procedure TGameStateObserver.TrackTormentedDemonCombatStyle();
