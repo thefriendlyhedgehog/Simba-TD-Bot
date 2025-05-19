@@ -8,28 +8,19 @@ var
 
 procedure ProjectileTest();
 begin
-  img := TImage.Create('mage_projectile_0.png');
-  Target.SetImage(img);
+  //img := TImage.Create('mage_projectile_0.png');
+ // Target.SetImage(img);
 
-  Options.ZoomLevel := 50;
-  MM2MS.Projector.UpdateZoom(50);
-  Options.MaxBrightness := True;
+  //Options.ZoomLevel := 50;
+  //MM2MS.Projector.UpdateZoom(50);
+  //Options.MaxBrightness := True;
 
   OverheadFinder.Setup;
   Map.Setup(Chunk([63,69,64,68], 0)); //TD lair
   GameState.Observer.Start;
   TDCombat.Init([MeleeTestLoadout, RangedTestLoadout]);
-  Sleep(5000);
+  Sleep(500000);
 
-  for i := 6 to 7 do
-  begin
-    writeln Format('mage_projectile_%d.png', [i]);
-    img := TImage.Create(Format('mage_projectile_%d.png', [i]));
-    Target.SetImage(img);
-    Sleep(3000);
-    GameState.Observer.TrackTormentedDemonCombatStyle;
-    Sleep(5000);
-  end;
 end;
 
 procedure CombatTest();
@@ -38,13 +29,17 @@ begin
   Map.Setup(Chunk([63,69,64,68], 0)); //TD lair
   GameState.Observer.Start;
   TDCombat.Init([MeleeTestLoadout, RangedTestLoadout]);
+  sleep(2000);
   Inventory.Open;
   Sleep(5000);
   TDCombat.Fight;
 end;
 
 begin
+ // WaspInput.Setup;
   CombatTest;
+  //Sleep(2000);
+  //writeln prayer.GetActivePrayers;
 end.
 
 

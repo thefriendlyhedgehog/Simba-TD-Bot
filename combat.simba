@@ -43,22 +43,6 @@ type
 
   TTDCombatActionSet = set of ETDCombatAction;
 
-procedure TTDCombatActionSet.Add(action: ETDCombatAction); begin
-  Self := Self + action;
-end;
-
-procedure TTDCombatActionSet.Add(actions: TTDCombatActionSet); overload; begin
-  Self := Self + actions;
-end;
-
-procedure TTDCombatActionSet.Remove(action: ETDCombatAction); begin
-  Self := Self - [action];
-end;
-
-function TTDCombatActionSet.Contains(action: ETDCombatAction): Boolean; begin
-  Result := action in Self;
-end;
-
 type
   TTDCombat = record
     ActionHandlers: array[ETDCombatAction] of procedure() of object;
@@ -117,9 +101,9 @@ function TTDCombat.ShouldChangePrayer(): Boolean;
 var
   requiredPrayers, activePrayers: TRSPrayerSet;
 begin
-  activePrayers := GameState.GetPlayerActivePrayers;
+  activePrayers := CombatObserver.GetPlayerActivePrayers;
 
-  case GameState.GetTormentedDemonCombatStyle of
+  case CombatObserver.GetTormentedDemonCombatStyle of
     ERSCombatStyle.MELEE: requiredPrayers += ERSPrayer.PROTECT_FROM_MELEE;
     ERSCombatStyle.RANGED: requiredPrayers += ERSPrayer.PROTECT_FROM_MISSILES;
     ERSCombatStyle.MAGIC: requiredPrayers += ERSPrayer.PROTECT_FROM_MAGIC;
@@ -129,12 +113,12 @@ begin
   end;
 
   requiredPrayers += Self.ActiveLoadout.OffensivePrayers;
-  Result := (requiredPrayers - GameState.GetPlayerActivePrayers) <> TRSPrayerSet([]);
+  Result := (requiredPrayers - CombatObserver.GetPlayerActivePrayers) <> TRSPrayerSet([]);
 end;
 
 function TTDCombat.ShouldChangeGear(): Boolean;
 begin
-  if Self.ActiveLoadout.Style = GameState.GetTormentedDemonProtectedStyle then
+  if Self.ActiveLoadout.Style = CombatObserver.GetTormentedDemonProtectedStyle then
     Exit(True);
 
   //TODO CALC DPS to decide whether or not to switch styles
@@ -142,7 +126,7 @@ end;
 
 function TTDCombat.IsSnared(): Boolean;
 begin
-  Result := GameState.IsPlayerSnared;
+  Result := CombatObserver.IsPlayerSnared;
 end;
 
 function TTDCombat.GetActions(): TTDCombatActionSet; begin
@@ -153,10 +137,10 @@ function TTDCombat.GetActions(): TTDCombatActionSet; begin
   if not Self.IsAttacking     then Result += ETDCombatAction.ATTACK;
 
   if Self.ShouldChangeGear then
-    Result.Add([ETDCombatAction.OPEN_INVENTORY, ETDCombatAction.SWAP_GEAR, ETDCombatAction.ATTACK]);
+    Result += [ETDCombatAction.OPEN_INVENTORY, ETDCombatAction.SWAP_GEAR, ETDCombatAction.ATTACK];
 
   if Self.IsSnared then
-    Result.Add([ETDCombatAction.DODGE_SNARE, ETDCombatAction.SWAP_PRAYER, ETDCombatAction.ATTACK]);
+    Result += [ETDCombatAction.DODGE_SNARE, ETDCombatAction.SWAP_PRAYER, ETDCombatAction.ATTACK];
 end;
 
 procedure TTDCombat.Action_None();
@@ -185,11 +169,11 @@ begin
     Exit;
   end;
 
-  hitsplatTimer.Start(600*Ceil(GameState.GetPlayerPosition.DistanceTo(GameState.GetTormentedDemonPosition)/8));
+  hitsplatTimer.Start(600*Ceil(CombatObserver.GetPlayerPosition.DistanceTo(CombatObserver.GetTormentedDemonPosition)/8));
   Self.DebugLn('Waiting %dms for hitsplat or earned xp', [hitsplatTimer.Remaining]);
   while hitsplatTimer.Remaining > 0 do
   begin
-    if TRSHitsplat.Find(hitsplats, [GameState.GetTormentedDemonMSPoints.Bounds]) then
+    if TRSHitsplat.Find(hitsplats, [CombatObserver.GetTormentedDemonMSPoints.Bounds]) then
     begin
       Self.DebugLn('Found hitsplats');
       Break;
@@ -203,39 +187,24 @@ begin
     //async mouse to prayers?
   end;
 
-  Self.DebugLn('Current distance from tormented demon: %f', [GameState.GetTormentedDemonPosition.DistanceTo(GameState.GetPlayerPosition)]);
-  if GameState.GetTormentedDemonPosition.DistanceTo(GameState.GetPlayerPosition) <= 20 then
+  Self.DebugLn('Current distance from tormented demon: %f', [CombatObserver.GetTormentedDemonPosition.DistanceTo(CombatObserver.GetPlayerPosition)]);
+  if CombatObserver.GetTormentedDemonPosition.DistanceTo(CombatObserver.GetPlayerPosition) <= 20 then
   begin
     Self.DebugLn('Tormented demon is too close, stepping away');
     Self.DoAction(ETDCombatAction.STEP_AWAY);
   end;
 
-  tdPosition := GameState.GetTormentedDemonPosition;
-  Self.DebugLn('Waiting for tormented demon movement to detect combat style. Current position: ' + ToStr(tdPosition));
   Sleep(1200);  //static wait??
-
-  Self.DebugLn('tormented demon after wait: Position: ' + ToStr(GameState.GetTormentedDemonPosition) + '| Distance: %f', [GameState.GetTormentedDemonPosition.DistanceTo(GameState.GetPlayerPosition)]);
-
-  if GameState.GetTormentedDemonPosition.DistanceTo(GameState.GetPlayerPosition)
-    < tdPosition.DistanceTo(GameState.GetPlayerPosition) then
-  begin
-    Self.DebugLn('Detected melee combat style');
-    //GameState.SetTormentedDemonCombatStyle(ERSCombatStyle.MELEE);
-  end else
-  begin
-    Self.DebugLn('Combat style unkown');
-    //GameState.SetTormentedDemonCombatStyle(ERSCombatStyle.UNKNOWN);
-  end;
 end;
 
 procedure TTDCombat.Action_Attack();
 var
   timeout: TCountDown;
 begin
-  if GameState.GetTormentedDemonMSPoints.Length < 1 then
+  if CombatObserver.GetTormentedDemonMSPoints.Length < 1 then
     Exit;
 
-  ASync.MouseMove(GameState.GetTormentedDemonMSPoints.Mean);
+  ASync.MouseMove(CombatObserver.GetTormentedDemonMSPoints.Mean);
   timeout.Start(5000);
   //while mouse is moving to the center of tormented demon we check for proper uptext and upon
   //finding the uptext, we wait at a random range of 100ms to 2 seconds or when mouse movement is
@@ -273,7 +242,7 @@ var
   walkTimer: TCountdown;
 begin
   //find target coordinates used to search for a place to walk to. Target is calculated to be 3 tiles further away with the demon.
-  direction := GameState.GetTormentedDemonPosition - GameState.GetPlayerPosition;
+  direction := CombatObserver.GetTormentedDemonPosition - CombatObserver.GetPlayerPosition;
   magnitude := Sqrt(Sqr(direction.X) + Sqr(direction.Y));
   Self.DebugLn('Initial step-away direction: %s | Magnitude: %f', [ToStr(direction), magnitude]);
 
@@ -297,7 +266,7 @@ begin
       Break;
 
     rotation := EdgeWeightedRandom(4, -30, 30);
-    destination := destination.Rotate(rotation, GameState.GetTormentedDemonPosition);
+    destination := destination.Rotate(rotation, CombatObserver.GetTormentedDemonPosition);
     Self.DebugLn('Rotated destination by %.2f degrees around demon to %s', [rotation, ToStr(destination)]);
   end;
 
@@ -333,7 +302,8 @@ begin
 
   Sleep(Min(Random(200, 1000), walkTimer.Remaining));
   Self.DoAction(ETDCombatAction.OPEN_PRAYER);
-  Sleep(walkTimer.Remaining);
+  if walkTimer.Remaining > 20 then
+    Sleep(walkTimer.Remaining);
 end;
 
 
@@ -341,9 +311,9 @@ procedure TTDCombat.Action_SwapPrayer();
 var
   activePrayers, requiredPrayers: TRSPrayerSet;
 begin
-  activePrayers := GameState.GetPlayerActivePrayers;
+  activePrayers := CombatObserver.GetPlayerActivePrayers;
 
-  case GameState.GetTormentedDemonCombatStyle of
+  case CombatObserver.GetTormentedDemonCombatStyle of
     ERSCombatStyle.MELEE:  requiredPrayers += ERSPrayer.PROTECT_FROM_MELEE;
     ERSCombatStyle.RANGED: requiredPrayers += ERSPrayer.PROTECT_FROM_MISSILES;
     ERSCombatStyle.MAGIC:  requiredPrayers += ERSPrayer.PROTECT_FROM_MAGIC;
@@ -415,7 +385,7 @@ begin
   Self.DebugLn('Searching inventory for gear');
   for item in gearToEquip do
   begin
-    slot := GameState.GetInventoryItems.IndexOf(item);
+    slot := CombatObserver.GetInventoryItems.IndexOf(item);
     if slot < 0 then
       Continue;
     slots += slot;

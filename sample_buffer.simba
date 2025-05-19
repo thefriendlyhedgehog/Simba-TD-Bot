@@ -12,8 +12,11 @@ var
 begin
   for i := Self.Low to Self.High do
   begin
+    if Self[i].Data = nil then
+      Continue;
     FreeMem(Self[i].Data);
-    Self[i] := [];
+    Self[i].Data := nil;
+    Self[i].Time := 0;
   end;
 end;
 
@@ -32,13 +35,17 @@ begin
 end;
 
 procedure TSampleBuffer.Add(p: Pointer);
+var
+  newPtr: Pointer;
 begin
   if Self.Data[Self.Index].Data <> nil then
     FreeMem(Self.Data[Self.Index].Data);
 
+  newPtr := AllocMem(Self.SampleDataSize);
+  Move(p^, newPtr^, Self.SampleDataSize);
+
   Self.Data[Self.Index].Time := GetTimeRunning;
-  Self.Data[Self.Index].Data := AllocMem(Self.SampleDataSize);
-  Move(p^, Self.Data[Self.Index].Data^, Self.SampleDataSize);
+  Self.Data[Self.Index].Data := newPtr;
 
   Inc(Self.Index);
   if Self.Index > High(Self.Data) then
@@ -68,7 +75,8 @@ begin
     if Self.Data[i].Data <> nil then
     begin
       FreeMem(Self.Data[i].Data);
-      Self.Data[i] := [];
+      Self.Data[i].Time := 0;
+      Self.Data[i].Data := nil;
     end;
 
   SetLength(Self.Data, 0);
@@ -107,4 +115,3 @@ begin
 
   SetLength(Result, count);
 end;
-

@@ -14,7 +14,7 @@ const
 
 type
 
-  TGameStateObserver = record
+  TCombatObserver = record
     TaskManager: TReschedulingTaskManager;
 
     pLock: TLock;
@@ -26,51 +26,51 @@ type
     pHitsplatBuffer: TSampleBuffer;
     pDivineDoses: Integer;
     pLastDivineConsume: Integer;
+    pLastDamageTakenTime: UInt64;
+    pIsSnared: Boolean;
 
     tdLock: TLock;
+    tdTrackingTimes: array[0..20] of UInt64;
+    tdTrackingTimesIndex: Integer;
     tdProtectedStyle: ERSCombatStyle;
     tdCombatStyle: ERSCombatStyle;
     tdMainScreenPoints: TPointArray;
     tdPosition: TPoint;
     tdPositionBuffer: TSampleBuffer;
     tdHealth: Integer;
-    tdIsCastingSnare: Boolean;
     tdProjectileBuffer: TSampleBuffer;
   end;
 
-  TGameState = record
-    Observer: TGameStateObserver;
-  end;
+procedure TCombatObserver.DebugLn(text: String); begin
+  WriteLn(GetTimeStamp + ':[TCombatObserver]: ' + text);
+end;
 
-function TGameStateObserver.GetPlayerPosition(): TPoint;
+procedure TCombatObserver.DebugLn(text: String; args: TVariantArray); overload; begin
+  Self.DebugLn(Format(text, args));
+end;
+
+function TCombatObserver.GetPlayerPosition(): TPoint;
 begin
   Self.pLock.Enter;
   Result := Self.pPosition;
   Self.pLock.Leave;
 end;
 
-function TGameStateObserver.GetInventoryItems(): TRSDiscoveredInventory;
+function TCombatObserver.GetInventoryItems(): TRSDiscoveredInventory;
 begin
   Self.pLock.Enter;
   Result := Self.pInventoryItems.Copy;
   Self.pLock.Leave;
 end;
 
-function TGameStateObserver.GetPlayerActivePrayers(): TRSPrayerSet;
+function TCombatObserver.GetPlayerActivePrayers(): TRSPrayerSet;
 begin
   Self.pLock.Enter;
   Result := Self.pActivePrayers;
   Self.pLock.Leave;
 end;
 
-procedure TGameStateObserver.SetPlayerActivePrayers(prayers: TRSPrayerSet);
-begin
-  Self.pLock.Enter;
-  Self.pActivePrayers := prayers;
-  Self.pLock.Leave;
-end;
-
-procedure TGameStateObserver.ReadInventoryTab();
+procedure TCombatObserver.ReadInventoryTab();
 begin
   if (not Inventory.IsOpen) or (ChooseOption.IsOpen and ChooseOption.Bounds.Intersects(GameTab.Bounds)) then
     Exit;
@@ -80,25 +80,14 @@ begin
   Self.pLock.Leave;
 end;
 
-procedure TGameStateObserver.ReadPrayerTab();
-var
-  b: TBox;
-begin
-  //TODO HOW DO WE TRACK PRAYERS WITH VISUALS ONLY??
-  ////triple ensure that the prayer tab is open to prevent false results.
-  //if Prayer.IsOpen and Prayer.Find(ERSPrayer.THICK_SKIN, b) and Prayer.Find(ERSPrayer.PROTECT_FROM_MELEE, b) then
-  //  Self.SetPlayerActivePrayers(Prayer.GetActivePrayers);
-end;
-
-procedure TGameStateObserver.ReadGameTabs();
+procedure TCombatObserver.ReadGameTabs();
 begin
   case GameTabs.GetCurrent of
     ERSGameTab.INVENTORY: Self.ReadInventoryTab;
-    ERSGameTab.PRAYER: Self.ReadPrayerTab;
   end;
 end;
 
-procedure TGameStateObserver.TrackPlayerPosition();
+procedure TCombatObserver.TrackPlayerPosition();
 var
   position: TPoint;
   previous: TSample;
@@ -110,13 +99,13 @@ begin
   with Self.pPositionBuffer do
   begin
     previous := Data[(Index - 1 + Data.Length) mod Data.Length];
-    if (previous.Data = nil) or ((previous.Data <> nil) and (TPoint(previous.Data^) <> position)) then
+    if (previous.Data = nil) or (TPoint(previous.Data^) <> position) then
       Add(@position);
   end;
   Self.pLock.Leave;
 end;
 
-procedure TGameStateObserver.TrackPlayerHitsplats();
+procedure TCombatObserver.TrackPlayerHitsplats();
   function CountDivineDoses(): Integer;
   var
     item: String;
@@ -125,7 +114,7 @@ procedure TGameStateObserver.TrackPlayerHitsplats();
     for items in Self.GetInventoryItems do
       for item in items do
       begin
-        if Pos('Divine', item) <= 0 then
+        if not item.Contains('Divine', False) then
           Continue;
         Inc(Result, item.ExtractInteger(0));
         Break;
@@ -139,7 +128,7 @@ var
   hitsplats: TRSHitsplatArray;
   sample: TSample;
   samples: TSampleArray;
-  i: Int32;
+  i, j: Int32;
 begin
   //no hitsplats found, no hitsplats to track
   if not TRSHitsplat.Find(hitsplats, [MainScreen.GetPlayerBox]) then
@@ -148,10 +137,11 @@ begin
   currentTime := GetTimeRunning();
   divineDoses := CountDivineDoses;
 
-  for hitsplat in hitsplats do
+  for i := 0 to High(hitsplats) do
   begin
+    hitsplat := hitsplats[i];
     //skip all hitsplats that arent red because we only care about tracking damage to the player
-    if hitsplat.Color <> ERSHitSplat.RED then
+    if (hitsplat.Color <> ERSHitSplat.RED) or (hitsplat.Value < 1) then
       Continue;
 
     //if hitsplat value is a 10 then its possible it's related to a divine consumption
@@ -173,8 +163,8 @@ begin
         samples.Free;
         //now we must manually clean up any 10 valued hitsplats since the time of divine consumption.
         Self.pLock.Enter;
-        for i := 0 to Self.pHitsplatBuffer.Data.High do
-          with Self.pHitsplatBuffer.Data[i] do
+        for j := 0 to Self.pHitsplatBuffer.Data.High do
+          with Self.pHitsplatBuffer.Data[j] do
             if (Data <> nil) and (Time >= Self.pLastDivineConsume) and (TRSHitsplat(Data^).Value = 10) then
             begin
               FreeMem(Data);
@@ -197,82 +187,23 @@ begin
         sample := Data[(Index - 1 + Length(Data)) mod Length(Data)];
       if (sample.Data <> nil) and (TRSHitsplat(sample.Data^).Value = hitsplat.Value) and (currentTime - sample.Time < HITSPLAT_EXPIRE_MS) then
         Continue
-      else
+      else begin
         Self.pHitsplatBuffer.Add(@hitsplat);
+        writeln('Hitsplat added ', hitsplat);
+      end;
     finally
       Self.pLock.Leave;
     end;
   end;
 end;
 
-function TGameStateObserver.HasTDCastSnare(): Boolean;
-begin
-  Self.pLock.Enter;
-  Result := Self.tdIsCastingSnare;
-  Self.pLock.Leave;
-end;
-
-function TGameStateObserver.GetTormentedDemonMSPoints(): TPointArray;
-begin
-  Self.tdLock.Enter;
-  Result := Self.tdMainScreenPoints.Copy;
-  Self.tdLock.Leave;
-end;
-
-procedure TGameStateObserver.SetTormentedDemonMSPoints(points: TPointArray);
-begin
-  Self.tdLock.Enter;
-  Self.tdMainScreenPoints := points.copy;
-  Self.tdLock.Leave;
-end;
-
-function TGameStateObserver.GetTormentedDemonPosition(): TPoint;
-begin
-  Self.tdLock.Enter;
-  Result := Self.tdPosition;
-  Self.tdLock.Leave;
-end;
-
-procedure TGameStateObserver.SetTormentedDemonPosition(position: TPoint);
-begin
-  Self.tdLock.Enter;
-  Self.tdPosition := position;
-  Self.tdLock.Leave;
-end;
-
-function TGameStateObserver.GetTormentedDemonCombatStyle(): ERSCombatStyle;
-begin
-  Self.tdLock.Enter;
-  Result := Self.tdCombatStyle;
-  Self.tdLock.Leave;
-end;
-
-procedure TGameStateObserver.SetTormentedDemonCombatStyle(style: ERSCombatStyle);
-begin
-  Self.tdLock.Enter;
-  Self.tdCombatStyle := style;
-  Self.tdLock.Leave;
-end;
-
-function TGameStateObserver.GetTormentedDemonProtectedStyle(): ERSCombatStyle;
-begin
-  Self.tdLock.Enter;
-  Result := Self.tdProtectedStyle;
-  Self.tdLock.Leave;
-end;
-
-procedure TGameStateObserver.SetTormentedDemonProtectedStyle(style: ERSCombatStyle);
-begin
-  Self.tdLock.Enter;
-  Self.tdProtectedStyle := style;
-  Self.tdLock.Leave;
-end;
-
-procedure TGameStateObserver.FindTormentedDemonSnare();
+procedure TCombatObserver.DetectPlayerSnared();
 var
   snareColors : TPointArray;
   snareVisible: Boolean;
 begin
+  //TODO rewrite tracking logic, or find the colors i guess.
+  //TODO use time tracking instead of a boolean.
   snareColors := Target.FindColor(0, 0, Box(MainScreen.Center, 100, 100));
   if snareColors.Length = 0 then
     Exit;
@@ -281,12 +212,47 @@ begin
       MainScreen.NormalizeDistance(20),
       MainScreen.NormalizeDistance(30));
 
+  Self.pLock.Enter;
+  Self.pIsSnared := snareVisible;
+  Self.pLock.Leave;
+end;
+
+function TCombatObserver.IsPlayerSnared(): Boolean;
+begin
+  Self.pLock.Enter;
+  Result := Self.pIsSnared;
+  Self.pLock.Leave;
+end;
+
+function TCombatObserver.GetTormentedDemonMSPoints(): TPointArray;
+begin
   Self.tdLock.Enter;
-  Self.tdIsCastingSnare := snareVisible;
+  Result := Self.tdMainScreenPoints.Copy;
   Self.tdLock.Leave;
 end;
 
-procedure TGameStateObserver.FindTormentedDemon();
+function TCombatObserver.GetTormentedDemonPosition(): TPoint;
+begin
+  Self.tdLock.Enter;
+  Result := Self.tdPosition;
+  Self.tdLock.Leave;
+end;
+
+function TCombatObserver.GetTormentedDemonCombatStyle(): ERSCombatStyle;
+begin
+  Self.tdLock.Enter;
+  Result := Self.tdCombatStyle;
+  Self.tdLock.Leave;
+end;
+
+function TCombatObserver.GetTormentedDemonProtectedStyle(): ERSCombatStyle;
+begin
+  Self.tdLock.Enter;
+  Result := Self.tdProtectedStyle;
+  Self.tdLock.Leave;
+end;
+
+procedure TCombatObserver.TrackTormentedDemon();
 type
   TMMDotOvhCombo = record
     overhead: TRSOverhead;
@@ -330,12 +296,10 @@ var
       overhead: TRSOverhead;
       minimapDot: TPoint;
     end;
-  cuboid: TCuboid;
-  points: TPointArray;
+  edges: TPointArray;
+  orange: TPointArray;
+  demon: TPointArray;
 begin
-  //TODO handle exits differently?? maybe do nothing but timestamp the last update.
-  //possibly run a cleanup tasks, log average task times, if last update > average * x% then cleanup assignments
-
   d := performancetime;
   if not (Self.GetPlayerPosition in COMBAT_BOUNDS) then
   begin
@@ -364,28 +328,31 @@ begin
     Exit; //TODO handle more than 1 td??
   end;
 
-  cuboid := Minimap.Point2MSCuboid(combos[0].minimapDot, [2.6,2.6,14], compassAngle);
-  points := Target.FindColor($3F589A, 17.7, EColorSpace.HSV, [1.207,0.766,1.029], cuboid.Bounds);
-  points := points.Difference(cuboid.Filter(points)).Grow(3).Erode(4).Cluster(1).Largest;
+  edges := Target.FindEdges(0.2, EColorSpace.hsl, [2.0,0.1,0.1], MainScreen.Bounds);
+  orange := Target.FindColor($286AA7, 15, EColorSpace.HSL, [1,1,1]);
+  demon := edges.PointsNearby(orange, 0, MainScreen.NormalizeDistance(8))
+                .Grow(MainScreen.NormalizeDistance(8))
+                .Erode(MainScreen.NormalizeDistance(4))
+                .ExcludeDist(combos[0].overhead.Position, 0, 20)
+                .Cluster(MainScreen.NormalizeDistance(8))
+                .Largest;
 
-  if points.Length = 0 then
-  begin
-    Exit;
-  end;
-
-  Self.SetTormentedDemonMSPoints(points);
-  Self.SetTormentedDemonPosition(combos[0].minimapDot - Minimap.Center + Self.GetPlayerPosition);
+  Self.tdLock.Enter;
+  Self.tdMainScreenPoints := demon;
+  Self.tdPosition := combos[0].minimapDot - Minimap.Center + Self.GetPlayerPosition;
+  Self.tdPositionBuffer.Add(@Self.tdPosition);
   case combos[0].overhead.Overhead of
-    ERSOverhead.MELEE: Self.SetTormentedDemonProtectedStyle(ERSCombatStyle.MELEE);
-    ERSOverhead.RANGED: Self.SetTormentedDemonProtectedStyle(ERSCombatStyle.RANGED);
-    ERSOverhead.MAGIC: Self.SetTormentedDemonProtectedStyle(ERSCombatStyle.MAGIC);
+    ERSOverhead.MELEE: Self.tdProtectedStyle := ERSCombatStyle.MELEE;
+    ERSOverhead.RANGED: Self.tdProtectedStyle := ERSCombatStyle.RANGED;
+    ERSOverhead.MAGIC: Self.tdProtectedStyle := ERSCombatStyle.MAGIC;
   end;
 
-  if (performancetime - d) > 7 then
-    writeln 'TGameStateObserver.FindTormentedDemon ' + tostr(performancetime - d);
+  Self.tdTrackingTimes[Self.tdTrackingTimesIndex] := GetTimeRunning;
+  Self.tdTrackingTimesIndex := (Self.tdTrackingTimesIndex + 1) mod Self.tdTrackingTimes.Length;
+  Self.tdLock.Leave;
 end;
 
-function TGameStateObserver.GetProjectileStyleConfidence(out style: ERSCombatStyle): Single;
+function TCombatObserver.GetProjectileStyleConfidence(out style: ERSCombatStyle): Single;
 const
   PROJECTILE_SAMPLE_AGE = 3000;
 var
@@ -400,7 +367,7 @@ begin
   samples := Self.tdProjectileBuffer.GetSamples(0, PROJECTILE_SAMPLE_AGE);
   Self.tdLock.Leave;
 
-  if samples.Length = 0 then
+  if samples.Length < 5 then
     Exit;
 
   for sample in samples do
@@ -419,45 +386,63 @@ begin
   Result := counts[style] / total;
 end;
 
-function TGameStateObserver.FindMagicProjectile(searchArea: TBox): Boolean;
+function TCombatObserver.FindMagicProjectile(searchArea: TPolygon): Boolean;
 const
-  PROJECTILE_COLOR: TColorTolerance = [$40B2DF, 4.405, EColorSpace.HSL, [1.747, 0.513, 0.742]];
-  MIN_RADIUS = 5; MAX_RADIUS = 10;
-  MIN_DENSITY = 0.4; MAX_DENSITY = 0.65;
+  PROJECTILE_COLOR: TColorTolerance = [$3CA5D5, 6.840, EColorSpace.LAB, [0.894, 1.277, 0.831]];
+  MIN_RADIUS = 7; MAX_RADIUS = 9;
+  MIN_DENSITY = 0.45; MAX_DENSITY = 0.65;
 var
   points, cluster: TPointArray;
+  clusters: T2DPointArray;
   circ: TCircle;
   minRadiusNorm, maxRadiusNorm: Integer;
+  img: TImage;
+  i: Integer;
 begin
-  points := Target.FindColor(PROJECTILE_COLOR, searchArea)
-    .ExcludeBox(MainScreen.GetPlayerBox)
-    .ExcludePoints(Self.GetTormentedDemonMSPoints)
-    .Grow(MainScreen.NormalizeDistance(2))
-    .Erode(MainScreen.NormalizeDistance(1));
-
-  minRadiusNorm := MainScreen.NormalizeDistance(MIN_RADIUS);
-
-  if points.Length < (Pi * Sqr(minRadiusNorm) * MIN_DENSITY) then
-    Exit;
-
-  maxRadiusNorm := MainScreen.NormalizeDistance(MAX_RADIUS);
-
-  for cluster in points.Cluster(1.5) do
-  begin
-    circ := cluster.MinAreaCircle;
-    if InRange(circ.Radius, minRadiusNorm, maxRadiusNorm) and InRange(cluster.Length / circ.Area, MIN_DENSITY, MAX_DENSITY) then
-        Exit(True);
-  end;
+  //points := Target.FindColor(PROJECTILE_COLOR, MainScreen.Bounds).Erode(1).Grow(2).Erode(1).ExtractPolygon(searchArea).ExcludePoints(Self.GetTormentedDemonMSPoints);
+  //if points.Length = 0 then
+  //  Exit;
+  //clusters := points.Cluster(MainScreen.NormalizeDistance(8))
+  //                  .ExcludeSize(MainScreen.NormalizeDistance(150), __GT__)
+  //                  .ExcludeSize(MainScreen.NormalizeDistance(30), __LT__);
+  //
+  //if clusters.Length = 0 then
+  //  Exit;
+  //points := [];
+  //img := TImage.CreateFromTarget();
+  //
+  //for i := clusters.Low to clusters.High do
+  //begin
+  //  //if clusters[i].Circularity < 0.18 then
+  //  //  Continue;
+  //  img.DrawColor := 214700000 div (i+1);
+  //  img.DrawTPA(clusters[i]);
+  //  writeln clusters[i].Length;
+  //  img.DrawColor := 214700000 div (i+2);
+  //  img.TextSize('1');
+  //
+  //  img.DrawText(ToStr(clusters[i].Circularity).CopyRange(1,5), Point(clusters[i].Mean.X, clusters[i][0].Y - 30));
+  //  img.Show;
+  //  img.Free;
+  //  Sleep(500);
+  //end;
+  //
+  //if points.Length = 0 then
+  //  Exit;
+  //img := Target.GetImage;
+  //img.DrawATPA(points.Cluster(MainScreen.NormalizeDistance(8)));
+  //img.Show;
+  //img.Free;
 end;
 
-function TGameStateObserver.FindRangedProjectile(searchArea: TBox): Boolean;
+function TCombatObserver.FindRangedProjectile(searchArea: TPolygon): Boolean;
 begin
   //TODO this is boring
 end;
 
 type EMovementBias = enum(AWAY, TOWARD);
 
-function TGameStateObserver.CalcDirectionalMovementScore(samples: TSampleArray; reference: TPoint; bias: EMovementBias): Single;
+function TCombatObserver.CalcDirectionalMovementScore(samples: TSampleArray; reference: TPoint; bias: EMovementBias): Single;
 var
   currentTime: UInt64;
   previousPosition, currentPosition: TPoint;
@@ -496,9 +481,9 @@ begin
   Result := score / (samples.Length * 5);
 end;
 
-function TGameStateObserver.IsPlayerSteppingAway(): Boolean;
+function TCombatObserver.IsPlayerSteppingAway(): Boolean;
 const
-  MIN_SAMPLE_AMT = 8;
+  MIN_SAMPLE_AMT = 6;
   MIN_CONFIDENCE = 0.6;
   POS_AGE_DIFF = 200;
 var
@@ -531,7 +516,7 @@ begin
   end;
 end;
 
-function TGameStateObserver.IsTormentedDemonFollowing(): Boolean;
+function TCombatObserver.IsTormentedDemonFollowing(): Boolean;
 const
   MIN_SAMPLE_AMT = 5;
   MIN_CONFIDENCE = 0.6;
@@ -566,75 +551,128 @@ begin
   end;
 end;
 
-procedure TGameStateObserver.TrackTormentedDemonCombatStyle();
+procedure TCombatObserver.TrackTormentedDemonCombatStyle();
+  procedure SetCombatStyle(style: ERSCombatStyle; reason: String);
+  var
+    debugMessage: String;
+  begin
+    Self.tdLock.Enter;
+    debugMessage := Format('Setting Tormented Demon combat style to %s; previous style: %s; %s', [ToString(style), ToString(Self.tdCombatStyle), reason]);
+    Self.tdCombatStyle := style;
+    Self.tdLock.Leave;
+    Self.DebugLn(debugMessage);
+  end;
+
 const
   MELEE_DISTANCE_THRESHOLD = 8;
   PROJECTILE_CONFIDENCE_HI = 0.7;
   PROJECTILE_CONFIDENCE_LO = 0.5;
 var
-  searchArea: TBox;
+  compassAngle: Double;
+  searchArea: TPolygon;
   foundMagic, foundRanged, recentlyDetectedSteppingAway: Boolean;
   projectileStyleConfidence: Single;
   style, detectedProjectileStyle: ERSCombatStyle;
   hitsplats: TSampleArray;
   i: Int32;
   activeProtection: ERSPrayer;
+  img: TImage;
 begin
-  //search for and log any projectile found
-  searchArea := MainScreen.GetPlayerBox.Combine(Self.GetTormentedDemonMSPoints.Bounds);
-  foundMagic := Self.FindMagicProjectile(searchArea);
-  foundRanged := Self.FindRangedProjectile(searchArea);
-  if foundMagic or foundRanged then
-  begin
-    Self.tdLock.Enter;
-    if foundMagic then
-    begin
-      style := ERSCombatStyle.MAGIC;
-      Self.tdProjectileBuffer.Add(@style);
-    end;
-    if foundRanged then
-    begin
-      style := ERSCombatStyle.RANGED;
-      Self.tdProjectileBuffer.Add(@style);
-    end;
-    Self.tdLock.Leave;
-  end;
+  //if Minimap.GetDots(ERSMinimapDot.PLAYER).Length = 0 then
+  //  Exit;
+  //compassAngle := Minimap.GetCompassAngle;
+  //searchArea := [
+  //  Minimap.Vector2MS(TPoint(Self.GetTormentedDemonPosition - Self.GetPlayerPosition + Minimap.Center).ToVec3( 6), compassAngle),
+  //  Minimap.Vector2MS(TPoint(Self.GetTormentedDemonPosition - Self.GetPlayerPosition + Minimap.Center).ToVec3(14), compassAngle),
+  //  Minimap.Vector2MS(Minimap.GetDots(ERSMinimapDot.PLAYER)[0].ToVec3(12), compassAngle),
+  //  Minimap.Vector2MS(Minimap.GetDots(ERSMinimapDot.PLAYER)[0].ToVec3(-12), compassAngle)
+  //];
 
-  projectileStyleConfidence := Self.GetProjectileStyleConfidence(detectedProjectileStyle);
 
-  //if combat style is unknown and we're confident in a projectile type then set style
+  //with MainScreen.GetPlayerBox.Expand(0, MainScreen.NormalizeDistance(18)) do
+  //  if searchArea[0].X < MainScreen.Center.Y then
+  //    searchArea += [TopLeft, BottomLeft]
+  //  else
+  //    searchArea += [TopRight, BottomRight];
+
+  //img := Target.GetImage;
+  //img.DrawLine(searchArea[0], searchArea[1]);
+  //img.DrawLine(searchArea[1], searchArea[2]);
+  //img.DrawLine(searchArea[2], searchArea[3]);
+  //img.DrawLine(searchArea[3], searchArea[0]);
+  //img.Show;
+  //img.Free;
+
+  //foundMagic := Self.FindMagicProjectile(searchArea);
+  //foundRanged := Self.FindRangedProjectile(searchArea);
+  //if foundMagic or foundRanged then
+  //begin
+  //  Self.tdLock.Enter;
+  //  if foundMagic then
+  //  begin
+  //    style := ERSCombatStyle.MAGIC;
+  //    Self.tdProjectileBuffer.Add(@style);
+  //  end;
+  //  if foundRanged then
+  //  begin
+  //    style := ERSCombatStyle.RANGED;
+  //    Self.tdProjectileBuffer.Add(@style);
+  //  end;
+  //  Self.tdLock.Leave;
+  //end;
+
+  //projectileStyleConfidence := Self.GetProjectileStyleConfidence(detectedProjectileStyle);
+
+  //if combat style is unknown then we check confidence of range/mage projectile detection or
+  //melee detection via player running and td following
   if Self.GetTormentedDemonCombatStyle = ERSCombatStyle.UNKNOWN then
   begin
     if projectileStyleConfidence > PROJECTILE_CONFIDENCE_HI then
     begin
-      Self.SetTormentedDemonCombatStyle(detectedProjectileStyle);
+      SetCombatStyle(detectedProjectileStyle, Format('High confidence projectile reading, %.2f', [projectileStyleConfidence]));
       Exit;
     end;
 
+    //Check if we detected step away on a previous check and it's not expired, otherwise, check again if player has stepped away
     recentlyDetectedSteppingAway := (GetTimeRunning - Self.pTimeDetectedSteppingAway) <= 1200;
     if recentlyDetectedSteppingAway or Self.IsPlayerSteppingAway then
     begin
+      //Log time if step away is a new event.
       if not recentlyDetectedSteppingAway then
+      begin
+        Self.pLock.Enter;
         Self.pTimeDetectedSteppingAway := GetTimeRunning;
+        Self.pLock.Leave;
+      end;
 
+      //if tormented demon is following us then set style to melee
       if Self.IsTormentedDemonFollowing then
       begin
-        Self.SetTormentedDemonCombatStyle(ERSCombatStyle.MELEE);
+        SetCombatStyle(ERSCombatStyle.MELEE, 'Detected player step-away and demon following behavior');
         Exit;
       end;
     end;
   end;
 
-  //TODO ignore damage previous to the time that prayer was turned on + hitsplat expiry
-  //Check if we're taking damage, exit if not
   Self.pLock.Enter;
-  hitsplats := Self.pHitsplatBuffer.GetSamples(200, 2000);
+  hitsplats := Self.pHitsplatBuffer.GetSamples(0, 2000);
   Self.pLock.Leave;
-  for i := 0 to High(hitsplats) do
-    if TRSHitsplat(hitsplats[i].Data^).Color = ERSHitsplat.RED then
-      Break
-    else if i = High(hitsplats) then
+
+  try
+    //if no hitsplats or hitsplat from last damage taken hasn't expired then exit
+    if (hitsplats.Length = 0) or ((GetTimeRunning - Self.pLastDamageTakenTime) < HITSPLAT_EXPIRE_MS) then
       Exit;
+
+    for i := 0 to High(hitsplats) do
+      if (TRSHitsplat(hitsplats[i].Data^).Color = ERSHitsplat.RED) then
+      begin
+        Self.pLastDamageTakenTime := hitsplats[i].Time;
+        Break;
+      end else if i = High(hitsplats) then
+        Exit;
+  finally
+    hitsplats.Free;
+  end;
 
   //find active protection prayer, ERSPrayer(-1) if none
   for activeProtection in [ERSPrayer.PROTECT_FROM_MELEE, ERSPrayer.PROTECT_FROM_MISSILES, ERSPrayer.PROTECT_FROM_MAGIC, ERSPrayer(-1)] do
@@ -643,131 +681,123 @@ begin
 
   //if the correct prayer isnt active then exit, we're waiting for combat to turn the prayer on.
   case Self.GetTormentedDemonCombatStyle of
-    ERSCombatStyle.MELEE  :  if activeProtection <> ERSPrayer.PROTECT_FROM_MELEE    then Exit;
-    ERSCombatStyle.RANGED :  if activeProtection <> ERSPrayer.PROTECT_FROM_MISSILES then Exit;
-    ERSCombatStyle.MAGIC  :  if activeProtection <> ERSPrayer.PROTECT_FROM_MAGIC    then Exit;
+    ERSCombatStyle.MELEE  : if activeProtection <> ERSPrayer.PROTECT_FROM_MELEE    then Exit;
+    ERSCombatStyle.RANGED : if activeProtection <> ERSPrayer.PROTECT_FROM_MISSILES then Exit;
+    ERSCombatStyle.MAGIC  : if activeProtection <> ERSPrayer.PROTECT_FROM_MAGIC    then Exit;
   end;
 
   //Check if we're confident in a projectile type and that style is not our current set style
   if (projectileStyleConfidence > PROJECTILE_CONFIDENCE_HI) and (detectedProjectileStyle <> Self.GetTormentedDemonCombatStyle) then
-  begin
-    Self.SetTormentedDemonCombatStyle(detectedProjectileStyle);
-    Exit;
-  end;
-
+    SetCombatStyle(detectedProjectileStyle, Format('new high-confidence projectile reading %.2f', [projectileStyleConfidence]))
   //Check if tormented demon is out of melee range
-  if Self.GetTormentedDemonPosition.DistanceTo(Self.GetPlayerPosition) >= MELEE_DISTANCE_THRESHOLD then
-  begin
+  else if Self.GetTormentedDemonPosition.DistanceTo(Self.GetPlayerPosition) >= MELEE_DISTANCE_THRESHOLD then
     //use the opposite at range combat style if we're not confident in a projectile, or choose at random if we have melee or no prayer active
     case activeProtection of
-      ERSPrayer.PROTECT_FROM_MISSILES:  Self.SetTormentedDemonCombatStyle(ERSCombatStyle.MAGIC);
-      ERSPrayer.PROTECT_FROM_MAGIC:     Self.SetTormentedDemonCombatStyle(ERSCombatStyle.RANGED);
-      else
-        if Random(2) then
-          Self.SetTormentedDemonCombatStyle(ERSCombatStyle.MAGIC)
-        else
-          Self.SetTormentedDemonCombatStyle(ERSCombatStyle.RANGED);
-    end;
-  end else
+      ERSPrayer.PROTECT_FROM_MISSILES: SetCombatStyle(ERSCombatStyle.MAGIC , 'Out of melee range and taking damage but not projectile confident.');
+      ERSPrayer.PROTECT_FROM_MAGIC:    SetCombatStyle(ERSCombatStyle.RANGED, 'Out of melee range and taking damage but not projectile confident.');
+      else if RandomBoolean then       SetCombatStyle(ERSCombatStyle.MAGIC , 'Out of melee range, taking damage, no active protection prayer but not projectile confident')
+      else                             SetCombatStyle(ERSCombatStyle.RANGED, 'Out of melee range, taking damage, no active protection prayer but not projectile confident');
+    end
+  else if activeProtection in [ERSPrayer.PROTECT_FROM_MISSILES, ERSPrayer.PROTECT_FROM_MAGIC] then
+    SetCombatStyle(ERSCombatStyle.MELEE, 'Within melee range and taking damage but protecting from ranged or magic.')
+  else if projectileStyleConfidence > PROJECTILE_CONFIDENCE_LO then
+    SetCombatStyle(detectedProjectileStyle, Format('Within melee range and taking damage, switching with low confidence projectile reading %.2f', [projectileStyleConfidence]))
+  else if RandomBoolean then
+    SetCombatStyle(ERSCombatStyle.RANGED, 'Within melee ranged and taking damage, choosing at random')
+  else
+    SetCombatStyle(ERSCombatStyle.MAGIC, 'Within melee ranged and taking damage, choosing at random');
+end;
+
+procedure TCombatObserver.MaintainTDState;
+var
+  now, last, timeSinceLastUpdate, a, b, total: UInt64;
+  lastIdx, i, count: Integer;
+begin
+  lastIdx := (Self.tdTrackingTimesIndex + Self.tdTrackingTimes.High) mod Self.tdTrackingTimes.Length;
+
+  last := Self.tdTrackingTimes[lastIdx];
+  if last = 0 then
+    Exit; // nothing tracked yet
+
+  now := GetTimeRunning;
+  timeSinceLastUpdate := now - last;
+
+  // Compute average interval in-place
+  for i := 1 to Self.tdTrackingTimes.High do
   begin
-    //if active protection is magic, or ranged, then set to melee, if melee
-    if activeProtection in [ERSPrayer.PROTECT_FROM_MISSILES, ERSPrayer.PROTECT_FROM_MAGIC] then
-    begin
-      Self.SetTormentedDemonCombatStyle(ERSCombatStyle.MELEE);
-      Exit;
-    end;
+    a := Self.tdTrackingTimes[i - 1];
+    b := Self.tdTrackingTimes[i];
 
-    //Check for a lower confidence than we're normally looking for before choosing at random.
-    if projectileStyleConfidence > PROJECTILE_CONFIDENCE_LO then
+    if (a > 0) and (b > a) then
     begin
-      Self.SetTormentedDemonCombatStyle(detectedProjectileStyle);
-      Exit;
+      Inc(total, b - a);
+      Inc(count);
     end;
+  end;
 
-    if Random(2) then
-      Self.SetTormentedDemonCombatStyle(ERSCombatStyle.MAGIC)
-    else
-      Self.SetTormentedDemonCombatStyle(ERSCombatStyle.RANGED);
+  if count = 0 then
+    Exit;
+
+  if timeSinceLastUpdate > (total div count) * 2 then
+  begin
+    Self.DebugLn('TD state stale: %.1fms since last update (avg=%.1fms). Clearing...',
+      [timeSinceLastUpdate, total / count]);
+
+    Self.tdLock.Enter;
+    try
+      Self.tdMainScreenPoints := [];
+      Self.tdPosition := [0, 0];
+      Self.tdProtectedStyle := ERSCombatStyle.UNKNOWN;
+      Self.tdCombatStyle := ERSCombatStyle.UNKNOWN;
+      //Self.tdProjectileBuffer.Clear;
+      //Self.tdPositionBuffer.Clear;
+      FillMem(Self.tdTrackingTimes[0], SizeOf(Self.tdTrackingTimes), 0);
+    finally
+      Self.tdLock.Leave;
+    end;
   end;
 end;
 
-procedure TGameStateObserver.Start();
+procedure TCombatObserver.Start();
 begin
   Self.pHitsplatBuffer.Init(50, SizeOf(TRSHitsplat));
-  Self.pPositionBuffer.Init(200, SizeOf(TPoint));
+  Self.pPositionBuffer.Init(50, SizeOf(TPoint));
   Self.tdProjectileBuffer.Init(200, SizeOf(ERSCombatStyle));
+  Self.tdPositionBuffer.Init(50, SizeOf(TPoint));
 
   Self.pLock := TLock.Create;
   Self.tdLock := TLock.Create;
-  Self.TaskManager.Init('game_state', CPUInfo.CoreCount);
+  Self.TaskManager.Init('game_state', Min(7, CPUInfo.CoreCount));
 
-  Self.TaskManager.Schedule(@Self.TrackPlayerPosition);
-  Self.TaskManager.Schedule(@Self.ReadGameTabs);
-  Self.TaskManager.Schedule(@Self.FindTormentedDemon);
-  Self.TaskManager.Schedule(@Self.FindTormentedDemonSnare);
-  Self.TaskManager.Schedule(@Self.TrackTormentedDemonCombatStyle);
-  Self.TaskManager.Schedule(@Self.TrackPlayerHitsplats);
-
-  WriteLn('ReadPlayerPosition: ', ToStr(@Self.TrackPlayerPosition));
-  Writeln('FindTormentedDemon: ', ToStr(@Self.FindTormentedDemon));
-end;
-
-function TGameState.GetPlayerPosition(): TPoint;
-begin
-  Self.Observer.pLock.Enter;
-  Result := Self.Observer.pPosition;
-  Self.Observer.pLock.Leave;
-end;
-
-function TGameState.GetInventoryItems(): TRSDiscoveredInventory;
-begin
-  Self.Observer.pLock.Enter;
-  Result := Self.Observer.pInventoryItems.Copy;
-  Self.Observer.pLock.Leave;
-end;
-
-function TGameState.GetPlayerActivePrayers(): TRSPrayerSet;
-begin
-  Self.Observer.pLock.Enter;
-  Result := Self.Observer.pActivePrayers;
-  Self.Observer.pLock.Leave;
-end;
-
-function TGameState.IsPlayerSnared(): Boolean;
-begin
-  Self.Observer.pLock.Enter;
-  Result := Self.Observer.tdIsCastingSnare;
-  Self.Observer.pLock.Leave;
-end;
-
-function TGameState.GetTormentedDemonMSPoints(): TPointArray;
-begin
-  Self.Observer.tdLock.Enter;
-  Result := Self.Observer.tdMainScreenPoints.Copy;
-  Self.Observer.tdLock.Leave;
-end;
-
-function TGameState.GetTormentedDemonPosition(): TPoint;
-begin
-  Self.Observer.tdLock.Enter;
-  Result := Self.Observer.tdPosition;
-  Self.Observer.tdLock.Leave;
-end;
-
-function TGameState.GetTormentedDemonCombatStyle(): ERSCombatStyle;
-begin
-  Self.Observer.tdLock.Enter;
-  Result := Self.Observer.tdCombatStyle;
-  Self.Observer.tdLock.Leave;
-end;
-
-function TGameState.GetTormentedDemonProtectedStyle(): ERSCombatStyle;
-begin
-  Self.Observer.tdLock.Enter;
-  Result := Self.Observer.tdProtectedStyle;
-  Self.Observer.tdLock.Leave;
+  Self.TaskManager.Schedule('track_player_position', @Self.TrackPlayerPosition);
+  Self.TaskManager.Schedule('read_game_tabs', @Self.ReadGameTabs);
+  Self.TaskManager.Schedule('track_tormented_demon', @Self.TrackTormentedDemon);
+  Self.TaskManager.Schedule('find_tormented_demon_snare', @Self.DetectPlayerSnared);
+  Self.TaskManager.Schedule('track_tormented_demon_combat_style', @Self.TrackTormentedDemonCombatStyle);
+  Self.TaskManager.Schedule('track_player_hitsplats', @Self.TrackPlayerHitsplats);
+  Self.TaskManager.Schedule('maintain_td_state', @Self.MaintainTDState);
 end;
 
 var
-  GameState: TGameState;
+  CombatObserver: TCombatObserver;
+
+function TRSPrayer.Activate(prayers: TRSPrayerSet): Boolean; override;
+begin
+  if Result := inherited(prayers) then
+  begin
+    CombatObserver.pLock.Enter;
+    CombatObserver.pActivePrayers := Self.GetActivePrayers;
+    CombatObserver.pLock.Leave;
+  end;
+end;
+
+function TRSPrayer.Deactivate(prayers: TRSPrayerSet): Boolean; override;
+begin
+  if Result := inherited(prayers) then
+  begin
+    CombatObserver.pLock.Enter;
+    CombatObserver.pActivePrayers := Self.GetActivePrayers;
+    CombatObserver.pLock.Leave;
+  end;
+end;
 

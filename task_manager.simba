@@ -54,6 +54,7 @@ begin
     try
       Task^.Runnable();
     except
+      writeln @Task^.Runnable;
       writeln GetExceptionMessage;
       writeln DumpCallStack;
     end;
@@ -122,6 +123,7 @@ end;
 type
   TReschedulingTask = record
     ThreadPool: ^TThreadPool;
+    Name: String;
     Task: procedure() of object;
   end;
 
@@ -132,12 +134,19 @@ begin
   if @Self.Task = nil then
     Exit;
 
-  Self.Task();
+  try
+    Self.Task();
+  except
+    WriteLn('Error on task ', Self.Name);
+    WriteLn(GetExceptionMessage);
+    WriteLn(DumpCallStack);
+  end;
   Sleep(1);
 
   // Allocate a fresh task to avoid reuse issues
   New(newTask);
   newTask^.ThreadPool := Self.ThreadPool;
+  newTask^.Name := Self.Name;
   newTask^.Task := @Self.Task;
   newTask^.ThreadPool^.Run(@newTask^.Run);
 
@@ -157,13 +166,14 @@ begin
   Self.ThreadPool.Init(name, size);
 end;
 
-procedure TReschedulingTaskManager.Schedule(Task: procedure() of object);
+procedure TReschedulingTaskManager.Schedule(name: String; task: procedure() of object);
 var
   newTask: ^TReschedulingTask;
 begin
   New(newTask);
   newTask^.ThreadPool := @Self.ThreadPool;
-  newTask^.Task := @Task;
+  newTask^.Name := name;
+  newTask^.Task := @task;
   Self.ThreadPool.Run(@newTask^.Run);
 end;
 
