@@ -2,44 +2,74 @@
 {$INCLUDE_ONCE WaspLib/osrs.simba}
 {$INCLUDE_ONCE combat.simba}
 
-var
-  i : Integer;
-  img: TImage;
+type
+  TTormentedDemonBot = record
 
-procedure ProjectileTest();
+  end;
+
+procedure TTormentedDemonBot.Init();
 begin
-  //img := TImage.Create('mage_projectile_0.png');
- // Target.SetImage(img);
-
-  //Options.ZoomLevel := 50;
-  //MM2MS.Projector.UpdateZoom(50);
-  //Options.MaxBrightness := True;
-
-  OverheadFinder.Setup;
-  Map.Setup(Chunk([63,69,64,68], 0)); //TD lair
-  GameState.Observer.Start;
-  TDCombat.Init([MeleeTestLoadout, RangedTestLoadout]);
-  Sleep(500000);
-
+  OverheadFinder.Setup();
+  Map.Setup([Chunk([63,69,64,68], 0)]); //TD lair
+  CombatObserver.Start;
+  //TDCombat.Init([MeleeTestLoadout, RangedTestLoadout]);
 end;
 
-procedure CombatTest();
+procedure TTormentedDemonBot.CombatTest();
+var
+  MeleeTestLoadout, RangedTestLoadout: TRSCombatLoadout;
 begin
-  OverheadFinder.Setup;
-  Map.Setup(Chunk([63,69,64,68], 0)); //TD lair
-  GameState.Observer.Start;
+  with MeleeTestLoadout do
+  begin
+    Gear.Items[ERSEquipment.HEAD] := 'Purple slayer helmet (i)';
+    Gear.Items[ERSEquipment.CAPE] := 'Fire cape';
+    Gear.Items[ERSEquipment.FEET] := 'Aranea boots';
+    Gear.Items[ERSEquipment.HANDS] := 'Ferocious gloves';
+    Gear.Items[ERSEquipment.RING] := 'Berserker ring (i)';
+
+    Gear.Items[ERSEquipment.NECK] := 'Amulet of torture';
+    Gear.Items[ERSEquipment.WEAPON] := 'Arclight';
+    Gear.Items[ERSEquipment.BODY] := 'Bandos chestplate';
+    Gear.Items[ERSEquipment.SHIELD] := 'Avernic defender (l)';
+    Gear.Items[ERSEquipment.LEGS] := 'Bandos tassets';
+
+    OffensivePrayers := [ERSPrayer.PIETY];
+    Boost := [ERSConsumableType.STRENGTH_BOOST];
+    Style := ERSCombatStyle.MELEE;
+  end;
+
+  with RangedTestLoadout do
+  begin
+    Gear.Items[ERSEquipment.HEAD] := 'Purple slayer helmet (i)';
+    Gear.Items[ERSEquipment.CAPE] := 'Fire cape';
+    Gear.Items[ERSEquipment.FEET] := 'Aranea boots';
+    Gear.Items[ERSEquipment.HANDS] := 'Ferocious gloves';
+    Gear.Items[ERSEquipment.RING] := 'Berserker ring (i)';
+
+    Gear.Items[ERSEquipment.NECK] := 'Necklace of anguish';
+    Gear.Items[ERSEquipment.WEAPON] := 'Bow of faerdhinen (c)';
+    Gear.Items[ERSEquipment.BODY] := 'Crystal body';
+    Gear.Items[ERSEquipment.LEGS] := 'Crystal legs';
+
+    OffensivePrayers := [ERSPrayer.RIGOUR];
+    Boost := [ERSConsumableType.RANGING_BOOST];
+    Style := ERSCombatStyle.RANGED;
+  end;
+
   TDCombat.Init([MeleeTestLoadout, RangedTestLoadout]);
-  sleep(2000);
+  Sleep(2000);
   Inventory.Open;
   Sleep(5000);
+
   TDCombat.Fight;
 end;
 
+var
+  TDBot: TTormentedDemonBot;
+
 begin
- // WaspInput.Setup;
-  CombatTest;
-  //Sleep(2000);
-  //writeln prayer.GetActivePrayers;
+  TDBot.Init();
+  TDBot.CombatTest();
 end.
 
 

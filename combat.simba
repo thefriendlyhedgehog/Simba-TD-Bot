@@ -1,7 +1,7 @@
 {$IFNDEF WASPLIB_OSRS} {$I WaspLib/osrs.simba} {$ENDIF}
 
 {$include_once combat_types.simba}
-{$include_once game_state.simba}
+{$include_once combat_observer.simba}
 {$include_once consumables.simba}
 {$include_once gear.simba}
 
@@ -259,7 +259,7 @@ begin
   //If no matches are found we will rotate the search area by +-30, edge weighted, around the tormented demons position.
   for attempt := 1 to 3 do
   begin
-    walkableMMPoints := Target.FindColor($666B6C, 2.075, EColorSpace.RGB, [0.904, 1.104, 0.994], Box(destination, 4, 4));
+    walkableMMPoints := Target.FindColor([$666B6C, 2.075, EColorSpace.RGB, [0.904, 1.104, 0.994]], Box(destination, 4, 4));
     Self.DebugLn('Attempt %d: Found %d walkable MM points', [attempt, walkableMMPoints.Length]);
 
     if walkableMMPoints.Length >= 5 then
@@ -367,7 +367,7 @@ end;
 
 procedure TTDCombat.Action_SwapGear();
 var
-  gearToEquip: TRSItemArray;
+  gearToEquip: TRSGear;
   item: TRSItem;
   slots: TIntegerArray;
   slot: Integer;
@@ -383,7 +383,7 @@ begin
   end;
 
   Self.DebugLn('Searching inventory for gear');
-  for item in gearToEquip do
+  for item in gearToEquip.Items do
   begin
     slot := CombatObserver.GetInventoryItems.IndexOf(item);
     if slot < 0 then
