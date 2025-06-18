@@ -1,0 +1,68 @@
+{$INCLUDE_ONCE WaspLib/osrs.simba}
+
+type
+  ETormentedDemonFormTab = enum(
+    INSTRUCTIONS,
+    GEAR,
+    INVENTORY,
+    POH,
+    TORMENTED_DEMON_SETTINGS,
+    ANTIBAN_SETTINGS
+  );
+
+  TTormentedDemonScriptForm = record
+    Form: TScriptForm;
+    Tabs: array[ETormentedDemonFormTab] of TLazTabSheet;
+
+
+    GearSelections: array[0..3] of TLazComboBox;
+    InventorySelection: TLazComboBox;
+    BankTravelSelection: TLazListBox;
+    TDTravelSelection: TLazListBox;
+  end;
+
+function TTormentedDemonScriptForm.CreateInstructionsTab(): TLazTabSheet;
+begin
+
+end;
+
+function TTormentedDemonScriptForm.CreateBotSettingsTab(): TLazTabSheet;
+const
+  GEAR_NAMES = ['Primary', 'Primary Punish', 'Secondary', 'Secondary Punish'];
+var
+  i: Integer;
+  gearLabel: TLazLabel;
+begin
+  Result := Self.Form.CreateTab('Settings');
+
+  for i := 0 to High(Self.GearSelections) do
+    Self.GearSelections[i] := GearForm.CreateGearCombobox(Result, GEAR_NAMES[i], 25, 45 + (40 * i));
+  with Self.GearSelections[0] do
+    gearLabel := TLazLabel.CreateEx(Result, 'Gear', '', Left + (Width div 2) - 25, Top - 75, 100, 18);
+  gearLabel.Font.Size := 15;
+end;
+
+procedure TTormentedDemonScriptForm.SetTab(etab: ETormentedDemonFormTab; tab: TLazTabSheet);
+begin
+  Self.Tabs[etab] := tab;
+  Self.Form.AddTab(tab);
+end;
+
+procedure TTormentedDemonScriptForm.Init();
+begin
+  Self.Form.Setup('Tormented Demon Bot');
+  Self.SetTab(ETormentedDemonFormTab.TORMENTED_DEMON_SETTINGS, Self.CreateBotSettingsTab());
+  Self.SetTab(ETormentedDemonFormTab.GEAR, Self.Form.CreateGearTab());
+end;
+
+procedure TTormentedDemonScriptForm.Open();
+begin
+  Self.Form.Run();
+end;
+
+var
+  TDForm: TTormentedDemonScriptForm;
+begin
+  TDForm.Init;
+  TDForm.Open;
+end.

@@ -7,3 +7,29 @@ type
     RANGED,
     MELEE
   );
+
+function ERSCombatStyle.MatchingOverhead(): ERSOverhead;
+begin
+  case Self of
+    ERSCombatStyle.MAGIC: Result := ERSOverhead.MAGIC;
+    ERSCombatStyle.RANGED: Result := ERSOverhead.RANGED;
+    ERSCombatStyle.MELEE: Result := ERSOverhead.MELEE;
+    else RaiseException(GetDebugLn(
+      Format('Combat style %s does not have a matching overhead.', [ToString(Self)]),
+      ELogLevel.ERROR,
+      True));
+  end;
+end;
+
+function ERSOverhead.MatchingCombatStyle(): ERSCombatStyle;
+begin
+  case Self of
+    ERSOverhead.MAGIC: Result := ERSCombatStyle.MAGIC;
+    ERSOverhead.RANGED: Result := ERSCombatStyle.RANGED;
+    ERSOverhead.MELEE: Result := ERSCombatStyle.MELEE;
+    else RaiseException(GetDebugLn(
+      Format('Overhead %s does not have a matching combat style.', [ToString(Self)]),
+      ELogLevel.ERROR,
+      True));
+  end;
+end;

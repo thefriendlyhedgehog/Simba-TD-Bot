@@ -27,7 +27,9 @@ type
   ETDCombatAction = (
     NONE,
     DODGE_SNARE,
+    OPEN_PRAYER,
     SWAP_PRAYER,
+    OPEN_INVENTORY,
     HEAL,
     RESTORE_PRAYER,
     CONSUME_BOOST,
@@ -36,8 +38,6 @@ type
     ATTACK,
     BEGIN_FIGHT,
     END_KILL,
-    OPEN_INVENTORY,
-    OPEN_PRAYER,
     OPEN_MAGIC
   );
 
@@ -72,19 +72,17 @@ begin
 end;
 
 function TTDCombat.ShouldHeal(): Boolean;
-var
-  health: Integer; //placeholder
 begin
   Result := ConsumableHandler.EatCoolDown.IsFinished
             and ConsumableHandler.DrinkCoolDown.IsFinished
-            and (health < 60);
+            and (Minimap.GetLevel(ERSMinimapOrb.HITPOINTS) < 60);
 end;
 
 function TTDCombat.ShouldBoost(): Boolean;
 var
   boost: ERSConsumableType;
 begin
-  Result := (Length(Self.ActiveLoadout.Boost) <> 0);
+  Result := Length(Self.ActiveLoadout.Boost) <> 0;
   for boost in Self.ActiveLoadout.Boost do
     if not ConsumableHandler.ShouldBoost(boost) then
       Exit(False);
@@ -94,21 +92,22 @@ function TTDCombat.ShouldRestorePrayer(): Boolean;
 var
   prayerpoints: Integer; //placeholder
 begin
-  Result := ConsumableHandler.DrinkCoolDown.IsFinished and (prayerpoints < 20);
+  Result := ConsumableHandler.DrinkCoolDown.IsFinished
+    and (Minimap.GetLevel(ERSMinimapOrb.PRAYER) < 20);
 end;
 
 function TTDCombat.ShouldChangePrayer(): Boolean;
 var
   requiredPrayers, activePrayers: TRSPrayerSet;
 begin
-  activePrayers := CombatObserver.GetPlayerActivePrayers;
+  activePrayers := CombatObserver.GetPlayerActivePrayers();
 
-  case CombatObserver.GetTormentedDemonCombatStyle of
+  case CombatObserver.GetTormentedDemonCombatStyle() of
     ERSCombatStyle.MELEE: requiredPrayers += ERSPrayer.PROTECT_FROM_MELEE;
     ERSCombatStyle.RANGED: requiredPrayers += ERSPrayer.PROTECT_FROM_MISSILES;
     ERSCombatStyle.MAGIC: requiredPrayers += ERSPrayer.PROTECT_FROM_MAGIC;
     ERSCombatStyle.UNKNOWN:
-      if [ERSPrayer.PROTECT_FROM_MAGIC, ERSPrayer.PROTECT_FROM_MISSILES] * activePrayers = TRSPrayerSet([]) then
+      if ([ERSPrayer.PROTECT_FROM_MAGIC, ERSPrayer.PROTECT_FROM_MISSILES] * activePrayers) = TRSPrayerSet([]) then
         Exit(True);
   end;
 
@@ -118,7 +117,7 @@ end;
 
 function TTDCombat.ShouldChangeGear(): Boolean;
 begin
-  if Self.ActiveLoadout.Style = CombatObserver.GetTormentedDemonProtectedStyle then
+  if Self.ActiveLoadout.Style = CombatObserver.GetTormentedDemonProtectedStyle() then
     Exit(True);
 
   //TODO CALC DPS to decide whether or not to switch styles
@@ -126,20 +125,20 @@ end;
 
 function TTDCombat.IsSnared(): Boolean;
 begin
-  Result := CombatObserver.IsPlayerSnared;
+  Result := CombatObserver.IsPlayerSnared();
 end;
 
 function TTDCombat.GetActions(): TTDCombatActionSet; begin
-  if Self.ShouldHeal          then Result += [ETDCombatAction.OPEN_INVENTORY, ETDCombatAction.HEAL,           ETDCombatACtion.ATTACK];
-  if Self.ShouldBoost         then Result += [ETDCombatAction.OPEN_INVENTORY, ETDCombatAction.CONSUME_BOOST,  ETDCombatACtion.ATTACK];
-  if Self.ShouldRestorePrayer then Result += [ETDCombatAction.OPEN_INVENTORY, ETDCombatAction.RESTORE_PRAYER, ETDCombatACtion.ATTACK];
-  if Self.ShouldChangePrayer  then Result += [ETDCombatACtion.OPEN_PRAYER,    ETDCombatAction.SWAP_PRAYER];
+  if Self.ShouldHeal()          then Result += [ETDCombatAction.OPEN_INVENTORY, ETDCombatAction.HEAL,           ETDCombatACtion.ATTACK];
+  if Self.ShouldBoost()         then Result += [ETDCombatAction.OPEN_INVENTORY, ETDCombatAction.CONSUME_BOOST,  ETDCombatACtion.ATTACK];
+  if Self.ShouldRestorePrayer() then Result += [ETDCombatAction.OPEN_INVENTORY, ETDCombatAction.RESTORE_PRAYER, ETDCombatACtion.ATTACK];
+  if Self.ShouldChangePrayer()  then Result += [ETDCombatACtion.OPEN_PRAYER,    ETDCombatAction.SWAP_PRAYER];
   if not Self.IsAttacking     then Result += ETDCombatAction.ATTACK;
 
-  if Self.ShouldChangeGear then
+  if Self.ShouldChangeGear() then
     Result += [ETDCombatAction.OPEN_INVENTORY, ETDCombatAction.SWAP_GEAR, ETDCombatAction.ATTACK];
 
-  if Self.IsSnared then
+  if Self.IsSnared() then
     Result += [ETDCombatAction.DODGE_SNARE, ETDCombatAction.SWAP_PRAYER, ETDCombatAction.ATTACK];
 end;
 
@@ -173,13 +172,13 @@ begin
   Self.DebugLn('Waiting %dms for hitsplat or earned xp', [hitsplatTimer.Remaining]);
   while hitsplatTimer.Remaining > 0 do
   begin
-    if TRSHitsplat.Find(hitsplats, [CombatObserver.GetTormentedDemonMSPoints.Bounds]) then
+    if TRSHitsplat.Find(hitsplats, [CombatObserver.GetTormentedDemonMSPoints().Bounds]) then
     begin
       Self.DebugLn('Found hitsplats');
       Break;
     end;
 
-    if XPBar.EarnedXP then
+    if XPBar.EarnedXP() then
     begin
       Self.DebugLn('XP earned.');
       Break;
@@ -202,7 +201,10 @@ var
   timeout: TCountDown;
 begin
   if CombatObserver.GetTormentedDemonMSPoints.Length < 1 then
+  begin
+    Self.DebugLn('Can''t find tormented demon');
     Exit;
+  end;
 
   ASync.MouseMove(CombatObserver.GetTormentedDemonMSPoints.Mean);
   timeout.Start(5000);
@@ -337,7 +339,6 @@ begin
   if Prayer.Open and Prayer.Activate(requiredPrayers - activePrayers) then
   begin
     Self.DebugLn('All prayers successfully activated');
-    //GameState.SetPlayerActivePrayers(requiredPrayers);
   end;
 end;
 
@@ -409,6 +410,7 @@ end;
 
 
 procedure TTDCombat.Action_DodgeSnare();
+
 begin
 
 end;
@@ -433,11 +435,14 @@ begin
   Magic.Open;
 end;
 
-procedure TTDCombat.DoAction(action: ETDCombatAction); begin
+procedure TTDCombat.DoAction(action: ETDCombatAction);
+begin
+  Self.DebugLn('Handling action %s', [ToString(action)]);
   Self.ActionHandlers[action]();
 end;
 
-function TTDCombat.ShouldContinueFighting: Boolean; begin
+function TTDCombat.ShouldContinueFighting(): Boolean;
+begin
   Result := True;
 end;
 
@@ -448,7 +453,7 @@ var
 begin
   Self.DoAction(ETDCombatAction.BEGIN_FIGHT);
 
-  while Self.ShouldContinueFighting do
+  while Self.ShouldContinueFighting() do
   begin
     actions := Self.GetActions;
     if actions <> [] then
@@ -458,7 +463,6 @@ begin
       Self.DoAction(action);
   end;
 end;
-
 
 procedure TTDCombat.Init(loadouts: array[0..1] of TRSCombatLoadout); begin
   Self.ActionHandlers[ETDCombatAction.NONE          ] := @Self.Action_None;

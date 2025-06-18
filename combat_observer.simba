@@ -3,6 +3,7 @@
 {$INCLUDE_ONCE tbox.simba}
 {$INCLUDE_ONCE inventory.simba}
 {$INCLUDE_ONCE sample_buffer.simba}
+{$INCLUDE_ONCE task_manager.simba}
 
 {$DEFINE TRACK_TD_DEBUG}
 
@@ -11,7 +12,8 @@ const
 
 type
   TCombatObserver = record
-    Scheduler: TThreadScheduler;
+    //ThreadManager: TThreadManager;
+    TaskManager: TReschedulingTaskManager;
 
     pLock: TLock;
     pPosition: TPoint;
@@ -66,13 +68,22 @@ begin
 end;
 
 procedure TCombatObserver.ReadInventoryTab();
+var
+  items: TRSDiscoveredInventory;
 begin
   if (not Inventory.IsOpen) or (ChooseOption.IsOpen and ChooseOption.Bounds.Intersects(GameTab.Bounds)) then
     Exit;
 
-  Self.pLock.Enter;
-  Self.pInventoryItems := Inventory.Items.DiscoverAllEx;
-  Self.pLock.Leave;
+
+  try
+    items := Inventory.Items.DiscoverAllEx();
+    Self.pLock.Enter();
+    Self.pInventoryItems := items;
+    Self.pLock.Leave();
+  except
+    if not GetExceptionMessage().Contains('TSimbaImage.FromFile: File') then
+      RaiseException(GetExceptionMessage());
+  end;
 end;
 
 procedure TCombatObserver.ReadGameTabs();
@@ -88,7 +99,6 @@ var
   previous: TSample;
 begin
   position := Map.Position;
-
   Self.pLock.Enter;
   Self.pPosition := position;
   with Self.pPositionBuffer do
@@ -247,110 +257,118 @@ begin
   Self.tdLock.Leave;
 end;
 
-procedure TCombatObserver.TrackTormentedDemon();
-type
-  TMMDotOvhCombo = record
-    overhead: TRSOverhead;
-    minimapDot: TPoint;
-  end;
-
-  function FindAndRemoveClosest(var overheads: TRSOverheadArray; out overhead: TRSOverhead; point: TPoint): Boolean;
-  var
-    i: Integer;
-    nearestOverhead: record index: Integer; distance: Double; end;
-    distance: Double;
-  begin
-    for i := 0 to High(overheads) do
-    begin
-      distance := overheads[i].Position.DistanceTo(point);
-      if (nearestOverhead.index = -1) or (distance < nearestOverhead.distance) then
-        nearestOverhead := [i, distance];
-    end;
-
-    if nearestOverhead.distance > 20 then
-      Exit;
-
-    overhead := overheads[nearestOverhead.index];
-    overheads.Remove(overheads[nearestOverhead.index]);
-    Result := True;
-  end;
-
-const
-  COMBAT_BOUNDS: TBox = [12040, 32718, 12084, 32782];
+function TCombatObserver.FindTDPositionAndOverhead(out position: TPoint; out overhead: TRSOverhead): Boolean;
 var
-  d: double;
-
-  minimapDot: TPoint;
+  minimapDot, predictedOverheadPt: TPoint;
   minimapDots: TPointArray;
-  overhead: TRSOverhead;
   overheads: TRSOverheadArray;
-  compassAngle: Double;
-  predictedOverheadPt: TPoint;
-  combos: array of
-    record
-      overhead: TRSOverhead;
-      minimapDot: TPoint;
-    end;
-  edges: TPointArray;
-  orange: TPointArray;
-  demon: TPointArray;
+  compassAngle: Single;
+  i: Integer;
 begin
-  d := performancetime;
-  if not (Self.GetPlayerPosition in COMBAT_BOUNDS) then
-  begin
-    {$IFDEF TRACK_TD_DEBUG}
-    Self.DebugLn('Not in combat bounds.');
-    {$ENDIF}
-    Exit;
-  end;
-
   minimapDots := Minimap.GetDots(ERSMinimapDot.NPC);
   overheads := OverheadFinder.Find([ERSOverhead.MELEE, ERSOverhead.MAGIC, ERSOverhead.RANGED]);
+
   if (minimapDots.Length = 0) or (overheads.Length = 0) then
   begin
-    {$IFDEF TRACK_TD_DEBUG}
-    Self.DebugLn('No minimap dots or overheads. Dots:%d; Overheads:%d', [minimapDots.Length, overheads.Length]);
-    {$ENDIF}
+    Self.DebugLn('No minimap dots or overheads. Dot count:%d; Overhead count:%d', [minimapDots.Length, overheads.Length]);
     Exit;
   end;
 
   compassAngle := Minimap.GetCompassAngle(False);
   for minimapDot in minimapDots do
   begin
-    if overheads.Length = 0 then
-      Break;
     predictedOverheadPt := Minimap.Vector2MS(minimapDot.ToVec3(26), compassAngle);
-    if FindAndRemoveClosest(overheads, overhead, predictedOverheadPt) then
-      combos += [overhead, minimapDot];
+    for i := 0 to overheads.High do
+      if overheads[i].Position.DistanceTo(predictedOverheadPt) <= 6 then
+      begin
+        with (minimapDot - Minimap.Center + Self.GetPlayerPosition()) do
+          position := [X div 4 * 4, Y div 4 * 4];
+        overhead := overheads[i];
+        Exit(True);
+      end;
   end;
+end;
 
-  if combos.Length <> 1 then
-  begin
-    Exit; //TODO handle more than 1 td??
-  end;
-
-  edges := Target.FindEdges(0.2, EColorSpace.hsl, [2.0,0.1,0.1], MainScreen.Bounds);
+function TCombatObserver.FindTDMainScreenPoints(out tdMainScreenPoints: TPointArray; overhead: TRSOverhead): Boolean;
+var
+  edges, orange, td: TPointArray;
+  minLength: Integer;
+begin
+  edges := Target.FindEdges(0.2, EColorSpace.HSL, [2.0,0.1,0.1], MainScreen.Bounds);
   orange := Target.FindColor([$286AA7, 15, EColorSpace.HSL, [1,1,1]]);
-  demon := edges.PointsNearby(orange, 0, MainScreen.NormalizeDistance(8))
-                .Grow(MainScreen.NormalizeDistance(8))
-                .Erode(MainScreen.NormalizeDistance(4))
-                .ExcludeDist(combos[0].overhead.Position, 0, 20)
-                .Cluster(MainScreen.NormalizeDistance(8))
-                .Largest;
+  td := MainScreen.Filter(edges)
+                  .PointsNearby(MainScreen.Filter(orange), 0, MainScreen.NormalizeDistance(8))
+                  .Grow(MainScreen.NormalizeDistance(8))
+                  .Erode(MainScreen.NormalizeDistance(4))
+                  .ExcludeDist(overhead.Position, 0, 20);
 
-  Self.tdLock.Enter;
-  Self.tdMainScreenPoints := demon;
-  Self.tdPosition := combos[0].minimapDot - Minimap.Center + Self.GetPlayerPosition;
-  Self.tdPositionBuffer.Add(@Self.tdPosition);
-  case combos[0].overhead.Overhead of
-    ERSOverhead.MELEE: Self.tdProtectedStyle := ERSCombatStyle.MELEE;
-    ERSOverhead.RANGED: Self.tdProtectedStyle := ERSCombatStyle.RANGED;
-    ERSOverhead.MAGIC: Self.tdProtectedStyle := ERSCombatStyle.MAGIC;
+  minLength := MainScreen.NormalizeDistance(400);
+
+  if td.Length < minLength then
+    Exit;
+
+  td := td.Cluster(MainScreen.NormalizeDistance(8)).Largest();
+
+  if td.Length >= minLength then
+  begin
+    tdMainScreenPoints := td;
+    Result := True;
+  end;
+end;
+
+procedure TCombatObserver.TrackTormentedDemon();
+const
+  COMBAT_BOUNDS: TBox = [12040, 32718, 12084, 32782];
+var
+  d: double;
+  tdPosition: TPoint;
+  overhead: TRSOverhead;
+  tdMainScreenPoints: TPointArray;
+begin
+  d := performancetime;
+  if not (Self.GetPlayerPosition() in COMBAT_BOUNDS) then
+  begin
+    Self.DebugLn('Not in combat bounds.');
+    Sleep(600);
+    Exit;
   end;
 
-  Self.tdTrackingTimes[Self.tdTrackingTimesIndex] := GetTimeRunning;
+  if not Self.FindTDPositionAndOverhead(tdPosition, overhead) then
+  begin
+    Self.DebugLn('Failed to find td position or overhead');
+    Sleep(600);
+    Exit;
+  end;
+
+  if not Self.FindTDMainScreenPoints(tdMainScreenPoints, overhead) then
+  begin
+    Self.DebugLn('Failed to find td mainscreen points.');
+    Sleep(600);
+    Exit;
+  end;
+
+  Self.tdLock.Enter();
+
+  if tdPosition <> Self.tdPosition then
+  begin
+    Self.DebugLn('TD position updating from %s to %s.', [ToString(Self.tdPosition), ToString(tdPosition)]);
+    Self.tdPosition := tdPosition;
+    Self.tdPositionBuffer.Add(@Self.tdPosition);
+  end;
+
+  if Self.tdProtectedStyle.MatchingOverhead() <> overhead.Overhead then
+  begin
+    Self.DebugLn('TD protected style updating from %s to %s.',
+      [ToString(Self.tdProtectedStyle.MatchingOverhead()),
+       ToString(overhead.Overhead.MatchingCombatStyle())]);
+    Self.tdProtectedStyle := overhead.Overhead.MatchingCombatStyle();
+  end;
+
+  Self.tdMainScreenPoints := tdMainScreenPoints;
+  Self.tdTrackingTimes[Self.tdTrackingTimesIndex] := GetTimeRunning();
   Self.tdTrackingTimesIndex := (Self.tdTrackingTimesIndex + 1) mod Self.tdTrackingTimes.Length;
-  Self.tdLock.Leave;
+
+  Self.tdLock.Leave();
 end;
 
 type EMovementBias = enum(AWAY, TOWARD);
@@ -482,70 +500,17 @@ const
   PROJECTILE_CONFIDENCE_LO = 0.5;
 var
   compassAngle: Double;
-  searchArea: TPolygon;
-  foundMagic, foundRanged, recentlyDetectedSteppingAway: Boolean;
-  projectileStyleConfidence: Single;
+  recentlyDetectedSteppingAway: Boolean;
   style, detectedProjectileStyle: ERSCombatStyle;
   hitsplats: TSampleArray;
   i: Int32;
   activeProtection: ERSPrayer;
   img: TImage;
 begin
-  //if Minimap.GetDots(ERSMinimapDot.PLAYER).Length = 0 then
-  //  Exit;
-  //compassAngle := Minimap.GetCompassAngle;
-  //searchArea := [
-  //  Minimap.Vector2MS(TPoint(Self.GetTormentedDemonPosition - Self.GetPlayerPosition + Minimap.Center).ToVec3( 6), compassAngle),
-  //  Minimap.Vector2MS(TPoint(Self.GetTormentedDemonPosition - Self.GetPlayerPosition + Minimap.Center).ToVec3(14), compassAngle),
-  //  Minimap.Vector2MS(Minimap.GetDots(ERSMinimapDot.PLAYER)[0].ToVec3(12), compassAngle),
-  //  Minimap.Vector2MS(Minimap.GetDots(ERSMinimapDot.PLAYER)[0].ToVec3(-12), compassAngle)
-  //];
-
-
-  //with MainScreen.GetPlayerBox.Expand(0, MainScreen.NormalizeDistance(18)) do
-  //  if searchArea[0].X < MainScreen.Center.Y then
-  //    searchArea += [TopLeft, BottomLeft]
-  //  else
-  //    searchArea += [TopRight, BottomRight];
-
-  //img := Target.GetImage;
-  //img.DrawLine(searchArea[0], searchArea[1]);
-  //img.DrawLine(searchArea[1], searchArea[2]);
-  //img.DrawLine(searchArea[2], searchArea[3]);
-  //img.DrawLine(searchArea[3], searchArea[0]);
-  //img.Show;
-  //img.Free;
-
-  //foundMagic := Self.FindMagicProjectile(searchArea);
-  //foundRanged := Self.FindRangedProjectile(searchArea);
-  //if foundMagic or foundRanged then
-  //begin
-  //  Self.tdLock.Enter;
-  //  if foundMagic then
-  //  begin
-  //    style := ERSCombatStyle.MAGIC;
-  //    Self.tdProjectileBuffer.Add(@style);
-  //  end;
-  //  if foundRanged then
-  //  begin
-  //    style := ERSCombatStyle.RANGED;
-  //    Self.tdProjectileBuffer.Add(@style);
-  //  end;
-  //  Self.tdLock.Leave;
-  //end;
-
-  //projectileStyleConfidence := Self.GetProjectileStyleConfidence(detectedProjectileStyle);
-
   //if combat style is unknown then we check confidence of range/mage projectile detection or
   //melee detection via player running and td following
   if Self.GetTormentedDemonCombatStyle = ERSCombatStyle.UNKNOWN then
   begin
-    if projectileStyleConfidence > PROJECTILE_CONFIDENCE_HI then
-    begin
-      SetCombatStyle(detectedProjectileStyle, Format('High confidence projectile reading, %.2f', [projectileStyleConfidence]));
-      Exit;
-    end;
-
     //Check if we detected step away on a previous check and it's not expired, otherwise, check again if player has stepped away
     recentlyDetectedSteppingAway := (GetTimeRunning - Self.pTimeDetectedSteppingAway) <= 1200;
     if recentlyDetectedSteppingAway or Self.IsPlayerSteppingAway then
@@ -599,11 +564,8 @@ begin
     ERSCombatStyle.MAGIC  : if activeProtection <> ERSPrayer.PROTECT_FROM_MAGIC    then Exit;
   end;
 
-  //Check if we're confident in a projectile type and that style is not our current set style
-  if (projectileStyleConfidence > PROJECTILE_CONFIDENCE_HI) and (detectedProjectileStyle <> Self.GetTormentedDemonCombatStyle) then
-    SetCombatStyle(detectedProjectileStyle, Format('new high-confidence projectile reading %.2f', [projectileStyleConfidence]))
   //Check if tormented demon is out of melee range
-  else if Self.GetTormentedDemonPosition.DistanceTo(Self.GetPlayerPosition) >= MELEE_DISTANCE_THRESHOLD then
+  if Self.GetTormentedDemonPosition.DistanceTo(Self.GetPlayerPosition) >= MELEE_DISTANCE_THRESHOLD then
     //use the opposite at range combat style if we're not confident in a projectile, or choose at random if we have melee or no prayer active
     case activeProtection of
       ERSPrayer.PROTECT_FROM_MISSILES: SetCombatStyle(ERSCombatStyle.MAGIC , 'Out of melee range and taking damage but not projectile confident.');
@@ -613,8 +575,6 @@ begin
     end
   else if activeProtection in [ERSPrayer.PROTECT_FROM_MISSILES, ERSPrayer.PROTECT_FROM_MAGIC] then
     SetCombatStyle(ERSCombatStyle.MELEE, 'Within melee range and taking damage but protecting from ranged or magic.')
-  else if projectileStyleConfidence > PROJECTILE_CONFIDENCE_LO then
-    SetCombatStyle(detectedProjectileStyle, Format('Within melee range and taking damage, switching with low confidence projectile reading %.2f', [projectileStyleConfidence]))
   else if RandomBoolean then
     SetCombatStyle(ERSCombatStyle.RANGED, 'Within melee ranged and taking damage, choosing at random')
   else
@@ -623,23 +583,26 @@ end;
 
 procedure TCombatObserver.MaintainTDState();
 var
+  trackingTimes: array of UInt64;
   now, last, timeSinceLastUpdate, a, b, total: UInt64;
   lastIdx, i, count: Integer;
 begin
+  Self.tdLock.Enter();
+  trackingTimes := Copy(Self.tdTrackingTimes, 0, Self.tdTrackingTimes.Length);
   lastIdx := (Self.tdTrackingTimesIndex + Self.tdTrackingTimes.High) mod Self.tdTrackingTimes.Length;
+  Self.tdLock.Leave();
 
-  last := Self.tdTrackingTimes[lastIdx];
+  last := trackingTimes[lastIdx];
   if last = 0 then
     Exit; // nothing tracked yet
 
   now := GetTimeRunning;
   timeSinceLastUpdate := now - last;
 
-  // Compute average interval in-place
-  for i := 1 to Self.tdTrackingTimes.High do
+  for i := 1 to trackingTimes.High do
   begin
-    a := Self.tdTrackingTimes[i - 1];
-    b := Self.tdTrackingTimes[i];
+    a := trackingTimes[i - 1];
+    b := trackingTimes[i];
 
     if (a > 0) and (b > a) then
     begin
@@ -651,12 +614,12 @@ begin
   if count = 0 then
     Exit;
 
-  if timeSinceLastUpdate > (total div count) * 2 then
+  if timeSinceLastUpdate > (total div count) * 4 then
   begin
-    Self.DebugLn('TD state stale: %.1fms since last update (avg=%.1fms). Clearing...',
+    Self.DebugLn('TD state stale: %dms since last update (avg=%.1fms). Clearing...',
       [timeSinceLastUpdate, total / count]);
 
-    Self.tdLock.Enter;
+    Self.tdLock.Enter();
     try
       Self.tdMainScreenPoints := [];
       Self.tdPosition := [0, 0];
@@ -665,7 +628,7 @@ begin
       //Self.tdPositionBuffer.Clear();
       FillMem(Self.tdTrackingTimes[0], SizeOf(Self.tdTrackingTimes), 0);
     finally
-      Self.tdLock.Leave;
+      Self.tdLock.Leave();
     end;
   end;
 end;
@@ -678,15 +641,24 @@ begin
 
   Self.pLock := TLock.Create;
   Self.tdLock := TLock.Create;
-  Self.Scheduler.Init('combat-observer', Min(7, CPUInfo.CoreCount), EDebugLevel.VERBOSE);
+  //Self.ThreadManager.Init(Min(7, CPUInfo.CoreCount), EDebugLevel.NONE);
+  //
+  //Self.ThreadManager.Schedule('track_player_position', @Self.TrackPlayerPosition, 50);
+  //Self.ThreadManager.Schedule('read_game_tabs', @Self.ReadGameTabs, 50);
+  //Self.ThreadManager.Schedule('track_tormented_demon', @Self.TrackTormentedDemon, 50);
+  //Self.ThreadManager.Schedule('find_tormented_demon_snare', @Self.DetectPlayerSnared, 50);
+  //Self.ThreadManager.Schedule('track_tormented_demon_combat_style', @Self.TrackTormentedDemonCombatStyle, 50);
+  //Self.ThreadManager.Schedule('track_player_hitsplats', @Self.TrackPlayerHitsplats, 50);
+  //Self.ThreadManager.Schedule('maintain_td_state', @Self.MaintainTDState, 50);
 
-  Self.Scheduler.Schedule('track_player_position', @Self.TrackPlayerPosition, 0);
-  Self.Scheduler.Schedule('read_game_tabs', @Self.ReadGameTabs, 0);
-  Self.Scheduler.Schedule('track_tormented_demon', @Self.TrackTormentedDemon, 0);
-  Self.Scheduler.Schedule('find_tormented_demon_snare', @Self.DetectPlayerSnared, 0);
-  Self.Scheduler.Schedule('track_tormented_demon_combat_style', @Self.TrackTormentedDemonCombatStyle, 0);
-  Self.Scheduler.Schedule('track_player_hitsplats', @Self.TrackPlayerHitsplats, 0);
-  Self.Scheduler.Schedule('maintain_td_state', @Self.MaintainTDState, 0);
+  Self.TaskManager.Init('combat_observer', Min(7, CPUInfo.CoreCount));
+  Self.TaskManager.Schedule('track_player_position', @Self.TrackPlayerPosition);
+  Self.TaskManager.Schedule('read_game_tabs', @Self.ReadGameTabs);
+  Self.TaskManager.Schedule('track_tormented_demon', @Self.TrackTormentedDemon);
+  Self.TaskManager.Schedule('find_tormented_demon_snare', @Self.DetectPlayerSnared);
+  Self.TaskManager.Schedule('track_tormented_demon_combat_style', @Self.TrackTormentedDemonCombatStyle);
+  Self.TaskManager.Schedule('track_player_hitsplats', @Self.TrackPlayerHitsplats);
+  Self.TaskManager.Schedule('maintain_td_state', @Self.MaintainTDState);
 end;
 
 var

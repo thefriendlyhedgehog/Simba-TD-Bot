@@ -4,13 +4,13 @@
 
 type
   TTormentedDemonBot = record
-
+    Form: TScriptForm;
   end;
 
 procedure TTormentedDemonBot.Init();
 begin
-  OverheadFinder.Setup();
   Map.Setup([Chunk([63,69,64,68], 0)]); //TD lair
+
   CombatObserver.Start;
   //TDCombat.Init([MeleeTestLoadout, RangedTestLoadout]);
 end;
@@ -62,13 +62,17 @@ begin
   Sleep(5000);
 
   TDCombat.Fight;
+
 end;
 
 var
   TDBot: TTormentedDemonBot;
 
 begin
+  Options.GetZoomLevel(True);
   TDBot.Init();
+
+  //map.DebugPosition;
   TDBot.CombatTest();
 end.
 

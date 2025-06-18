@@ -1,0 +1,181 @@
+type
+  PXThreadPool = ^TXThreadPool;
+
+  TXThreadPoolWorker = record
+    Thread: TThread;
+    Pool: PXThreadPool;
+  end;
+
+  PXThreadPoolTask = ^TXThreadPoolTask;
+  TXThreadPoolTask = record
+    Runnable: procedure() of object;
+    Next: PXThreadPoolTask;
+  end;
+
+  TXThreadPool = record
+    Name: String;
+    Terminated: Boolean;
+    Workers: array of TXThreadPoolWorker;
+    Tasks: PXThreadPoolTask;
+    TaskLock: TLock;
+  end;
+
+function TXThreadPool.NextTask(): PXThreadPoolTask;
+begin
+  Self.TaskLock.Enter;
+  Result := Self.Tasks;
+  if (Result <> nil) then
+  begin
+    Self.Tasks := Result^.Next;
+    Result^.Next := nil;
+  end;
+  Self.TaskLock.Leave;
+end;
+
+procedure TXThreadPoolWorker.Execute();
+var
+  Task: PXThreadPoolTask;
+begin
+  while not Self.Pool^.Terminated do
+  begin
+    Task := nil;
+
+    Task := Self.Pool^.NextTask();
+
+    if Self.Pool^.Terminated then
+      Break;
+
+    if Task = nil then
+    begin
+      Sleep(10);
+      Continue;
+    end;
+
+    try
+      Task^.Runnable();
+    except
+      writeln @Task^.Runnable;
+      writeln GetExceptionMessage;
+      writeln DumpCallStack;
+    end;
+
+    Dispose(Task);
+  end;
+end;
+
+procedure TXThreadPool.Init(name: String; size: Integer);
+var
+  i: Integer;
+begin
+  Self.Name := name;
+  Self.TaskLock := TLock.Create;
+
+  SetLength(Self.Workers, size);
+  for i := 0 to High(Self.Workers) do
+  begin
+    with Self.Workers[I] do
+    begin
+      Thread := TThread.Create(@Execute);
+      Thread.Name := Format('%s-Worker-%d', [Self.Name, i]);
+      Pool := @Self;
+    end;
+  end;
+end;
+
+procedure TXThreadPool.Run(runnable: procedure() of object);
+var
+  newTask, task: PXThreadPoolTask;
+begin
+  New(newTask);
+  newTask^.Runnable := @runnable;
+  newTask^.Next := nil;
+
+  Self.TaskLock.Enter;
+  if Self.Tasks = nil then
+  begin
+    Self.Tasks := newTask;
+  end else
+  begin
+    task := Self.Tasks;
+    while task^.Next <> nil do
+      task := task^.Next;
+
+    task^.Next := newTask;
+  end;
+  Self.TaskLock.Leave;
+end;
+
+procedure TXThreadPool.Terminate();
+var
+  i : Integer;
+begin
+  Self.Terminated := True;
+  for i := 0 to High(Self.Workers) do
+    with Self.Workers[i].Thread do
+    begin
+      Terminate;
+      WaitForTerminate;
+      Free;
+    end;
+  Self.TaskLock.Free;
+end;
+
+type
+  TReschedulingTask = record
+    ThreadPool: ^TXThreadPool;
+    Name: String;
+    Task: procedure() of object;
+  end;
+
+procedure TReschedulingTask.Run();
+var
+  newTask: ^TReschedulingTask;
+begin
+  if @Self.Task = nil then
+    Exit;
+
+  try
+    Self.Task();
+  except
+    WriteLn('Error on task ', Self.Name);
+    WriteLn(GetExceptionMessage);
+    WriteLn(DumpCallStack);
+  end;
+  Sleep(1);
+
+  // Allocate a fresh task to avoid reuse issues
+  New(newTask);
+  newTask^.ThreadPool := Self.ThreadPool;
+  newTask^.Name := Self.Name;
+  newTask^.Task := @Self.Task;
+  newTask^.ThreadPool^.Run(@newTask^.Run);
+
+  Dispose(Self);
+end;
+
+type
+  TReschedulingTaskManager = record
+    ThreadPool: TXThreadPool;
+  end;
+
+procedure TReschedulingTaskManager.Init(name: String; size: Integer);
+begin
+  Self.ThreadPool.Init(name, size);
+end;
+
+procedure TReschedulingTaskManager.Schedule(name: String; task: procedure() of object);
+var
+  newTask: ^TReschedulingTask;
+begin
+  New(newTask);
+  newTask^.ThreadPool := @Self.ThreadPool;
+  newTask^.Name := name;
+  newTask^.Task := @task;
+  Self.ThreadPool.Run(@newTask^.Run);
+end;
+
+procedure TReschedulingTaskManager.Terminate();
+begin
+  Self.ThreadPool.Terminate;
+end;
+
